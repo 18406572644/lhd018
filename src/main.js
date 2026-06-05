@@ -10,6 +10,7 @@ import {
   Option,
   Radio,
   RadioGroup,
+  RadioButton,
   Table,
   TableColumn,
   Pagination,
@@ -31,7 +32,10 @@ import {
   Menu,
   MenuItem,
   ColorPicker,
-  Upload
+  Upload,
+  Empty,
+  Alert,
+  Progress
 } from 'element-ui'
 
 Vue.use(Button)
@@ -41,6 +45,7 @@ Vue.use(Select)
 Vue.use(Option)
 Vue.use(Radio)
 Vue.use(RadioGroup)
+Vue.use(RadioButton)
 Vue.use(Table)
 Vue.use(TableColumn)
 Vue.use(Pagination)
@@ -61,6 +66,9 @@ Vue.use(Menu)
 Vue.use(MenuItem)
 Vue.use(ColorPicker)
 Vue.use(Upload)
+Vue.use(Empty)
+Vue.use(Alert)
+Vue.use(Progress)
 
 Vue.prototype.$message = Message
 Vue.prototype.$confirm = MessageBox.confirm
