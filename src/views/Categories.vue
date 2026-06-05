@@ -1,10 +1,21 @@
 <template>
   <div class="page-container categories">
     <div class="header flex-between">
-      <h2 class="page-title">分类管理</h2>
-      <el-button type="primary" icon="el-icon-plus" @click="handleAdd">
-        新增分类
-      </el-button>
+      <div class="header-left">
+        <h2 class="page-title">分类管理</h2>
+        <span class="category-stats">
+          <el-tag type="danger" size="small">支出: {{ expenseCategories.length }} 个</el-tag>
+          <el-tag type="success" size="small" style="margin-left: 8px;">收入: {{ incomeCategories.length }} 个</el-tag>
+        </span>
+      </div>
+      <div class="header-right">
+        <el-button icon="el-icon-refresh" @click="handleReset">
+          恢复默认
+        </el-button>
+        <el-button type="primary" icon="el-icon-plus" @click="handleAdd" style="margin-left: 8px;">
+          新增分类
+        </el-button>
+      </div>
     </div>
 
     <el-tabs v-model="activeTab" class="tabs">
@@ -179,6 +190,20 @@ export default {
       this.form = { ...cat }
       this.dialogVisible = true
     },
+    async handleReset() {
+      try {
+        await this.$confirm('确定要恢复默认分类吗？这将重置所有分类为系统默认值。', '提示', {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning'
+        })
+        const result = await categoryApi.resetCategories()
+        if (result) {
+          this.$message.success('已恢复默认分类')
+          this.loadCategories()
+        }
+      } catch (e) {}
+    },
     async handleDelete(cat) {
       try {
         await this.$confirm(`确定要删除分类「${cat.name}」吗？`, '提示', {
@@ -218,11 +243,31 @@ export default {
 .categories {
   .header {
     margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     
-    .page-title {
-      font-size: 22px;
-      font-weight: 600;
-      color: $text-primary;
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      
+      .page-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: $text-primary;
+        margin: 0;
+      }
+      
+      .category-stats {
+        display: flex;
+        align-items: center;
+      }
+    }
+    
+    .header-right {
+      display: flex;
+      align-items: center;
     }
   }
   

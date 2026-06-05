@@ -19,5 +19,6 @@ export const categoryApi = {
   getCategories: () => callIpc('get-categories'),
   addCategory: (category) => callIpc('add-category', category),
   updateCategory: (category) => callIpc('update-category', category),
-  deleteCategory: (id) => callIpc('delete-category', id)
+  deleteCategory: (id) => callIpc('delete-category', id),
+  resetCategories: () => callIpc('reset-categories')
 }

@@ -98,24 +98,66 @@ ipcMain.handle('delete-record', (event, id) => {
 ipcMain.handle('get-categories', () => {
   const filePath = path.join(getDataPath(), 'categories.json')
   let categories = readJsonFile(filePath)
+  
+  const defaultCategories = [
+    { id: 'c1', name: '餐饮', type: 'expense', icon: '🍜', color: '#ff6b6b' },
+    { id: 'c2', name: '交通', type: 'expense', icon: '🚗', color: '#4ecdc4' },
+    { id: 'c3', name: '购物', type: 'expense', icon: '🛍️', color: '#ffa502' },
+    { id: 'c4', name: '娱乐', type: 'expense', icon: '🎮', color: '#a29bfe' },
+    { id: 'c5', name: '居住', type: 'expense', icon: '🏠', color: '#fd79a8' },
+    { id: 'c6', name: '医疗', type: 'expense', icon: '💊', color: '#00b894' },
+    { id: 'c7', name: '教育', type: 'expense', icon: '📚', color: '#0984e3' },
+    { id: 'c8', name: '其他支出', type: 'expense', icon: '💸', color: '#636e72' },
+    { id: 'i1', name: '工资', type: 'income', icon: '💰', color: '#00b894' },
+    { id: 'i2', name: '奖金', type: 'income', icon: '🎁', color: '#fdcb6e' },
+    { id: 'i3', name: '投资', type: 'income', icon: '📈', color: '#6c5ce7' },
+    { id: 'i4', name: '其他收入', type: 'income', icon: '💵', color: '#00cec9' }
+  ]
+  
   if (!categories || categories.length === 0) {
-    categories = [
-      { id: 'c1', name: '餐饮', type: 'expense', icon: '🍜', color: '#ff6b6b' },
-      { id: 'c2', name: '交通', type: 'expense', icon: '🚗', color: '#4ecdc4' },
-      { id: 'c3', name: '购物', type: 'expense', icon: '🛍️', color: '#ffa502' },
-      { id: 'c4', name: '娱乐', type: 'expense', icon: '🎮', color: '#a29bfe' },
-      { id: 'c5', name: '居住', type: 'expense', icon: '🏠', color: '#fd79a8' },
-      { id: 'c6', name: '医疗', type: 'expense', icon: '💊', color: '#00b894' },
-      { id: 'c7', name: '教育', type: 'expense', icon: '📚', color: '#0984e3' },
-      { id: 'c8', name: '其他支出', type: 'expense', icon: '💸', color: '#636e72' },
-      { id: 'i1', name: '工资', type: 'income', icon: '💰', color: '#00b894' },
-      { id: 'i2', name: '奖金', type: 'income', icon: '🎁', color: '#fdcb6e' },
-      { id: 'i3', name: '投资', type: 'income', icon: '📈', color: '#6c5ce7' },
-      { id: 'i4', name: '其他收入', type: 'income', icon: '💵', color: '#00cec9' }
-    ]
+    categories = defaultCategories
     writeJsonFile(filePath, categories)
+  } else {
+    const existingIds = new Set(categories.map(c => c.id))
+    const hasIncome = categories.some(c => c.type === 'income')
+    const hasExpense = categories.some(c => c.type === 'expense')
+    
+    let needUpdate = false
+    if (!hasIncome || !hasExpense) {
+      defaultCategories.forEach(defaultCat => {
+        if (!existingIds.has(defaultCat.id)) {
+          categories.push(defaultCat)
+          needUpdate = true
+        }
+      })
+    }
+    
+    if (needUpdate) {
+      writeJsonFile(filePath, categories)
+    }
   }
+  
   return categories
+})
+
+ipcMain.handle('reset-categories', () => {
+  const filePath = path.join(getDataPath(), 'categories.json')
+  const defaultCategories = [
+    { id: 'c1', name: '餐饮', type: 'expense', icon: '🍜', color: '#ff6b6b' },
+    { id: 'c2', name: '交通', type: 'expense', icon: '🚗', color: '#4ecdc4' },
+    { id: 'c3', name: '购物', type: 'expense', icon: '🛍️', color: '#ffa502' },
+    { id: 'c4', name: '娱乐', type: 'expense', icon: '🎮', color: '#a29bfe' },
+    { id: 'c5', name: '居住', type: 'expense', icon: '🏠', color: '#fd79a8' },
+    { id: 'c6', name: '医疗', type: 'expense', icon: '💊', color: '#00b894' },
+    { id: 'c7', name: '教育', type: 'expense', icon: '📚', color: '#0984e3' },
+    { id: 'c8', name: '其他支出', type: 'expense', icon: '💸', color: '#636e72' },
+    { id: 'i1', name: '工资', type: 'income', icon: '💰', color: '#00b894' },
+    { id: 'i2', name: '奖金', type: 'income', icon: '🎁', color: '#fdcb6e' },
+    { id: 'i3', name: '投资', type: 'income', icon: '📈', color: '#6c5ce7' },
+    { id: 'i4', name: '其他收入', type: 'income', icon: '💵', color: '#00cec9' }
+  ]
+  writeJsonFile(filePath, defaultCategories)
+  return defaultCategories
 })
 
 ipcMain.handle('save-categories', (event, categories) => {

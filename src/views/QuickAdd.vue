@@ -35,8 +35,13 @@
       </div>
 
       <div class="categories-section">
-        <div class="section-title">选择分类</div>
-        <div class="categories-grid">
+        <div class="section-title">
+          选择{{ form.type === 'income' ? '收入' : '支出' }}分类
+          <span class="type-badge" :class="form.type">
+            {{ form.type === 'income' ? '收入模式' : '支出模式' }}
+          </span>
+        </div>
+        <div class="categories-grid" v-if="filteredCategories.length > 0">
           <div
             v-for="cat in filteredCategories"
             :key="cat.id"
@@ -51,6 +56,9 @@
             <div class="category-name">{{ cat.name }}</div>
           </div>
         </div>
+        <el-empty v-else :description="'暂无' + (form.type === 'income' ? '收入' : '支出') + '分类，请先在分类管理中添加'" class="empty-categories">
+          <el-button type="primary" size="small" @click="$router.push('/categories')">去添加分类</el-button>
+        </el-empty>
       </div>
 
       <div class="remark-section">
@@ -231,29 +239,77 @@ export default {
 .type-switch {
   display: flex;
   margin-bottom: 24px;
+  gap: 12px;
   
   ::v-deep .el-radio-button {
     flex: 1;
     
     .el-radio-button__inner {
       width: 100%;
-      padding: 12px 0;
-      font-size: 15px;
-      border-radius: 8px !important;
-      border: none;
+      padding: 14px 0;
+      font-size: 16px;
+      font-weight: 500;
+      border-radius: 10px !important;
+      border: 2px solid transparent;
       background: #f5f7fa;
       color: $text-regular;
+      transition: all 0.3s ease;
       
-      &.is-active {
-        background: $primary-color;
+      &:hover {
+        background: #e8eaed;
+        color: $text-primary;
+      }
+    }
+    
+    &[value="expense"] {
+      .el-radio-button__inner.is-active {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
         color: #fff;
+        border-color: #ff6b6b;
+        box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+      }
+    }
+    
+    &[value="income"] {
+      .el-radio-button__inner.is-active {
+        background: linear-gradient(135deg, #67C23A 0%, #52a82a 100%);
+        color: #fff;
+        border-color: #67C23A;
+        box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3);
       }
     }
   }
   
   ::v-deep .el-radio-button:first-child .el-radio-button__inner {
-    border-right: none;
-    margin-right: 8px;
+    border-right: 2px solid transparent;
+    margin-right: 0;
+  }
+}
+
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 8px;
+  
+  &.expense {
+    background: rgba(245, 108, 108, 0.1);
+    color: #F56C6C;
+  }
+  
+  &.income {
+    background: rgba(103, 194, 58, 0.1);
+    color: #67C23A;
+  }
+}
+
+.empty-categories {
+  padding: 30px 0;
+  
+  ::v-deep .el-empty__description {
+    margin-bottom: 16px;
   }
 }
 
