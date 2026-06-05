@@ -33,6 +33,12 @@ const routes = [
         name: 'Categories',
         component: () => import('@/views/Categories.vue'),
         meta: { title: '分类管理', icon: 'el-icon-folder-opened' }
+      },
+      {
+        path: 'accounts',
+        name: 'Accounts',
+        component: () => import('@/views/Accounts.vue'),
+        meta: { title: '账户管理', icon: 'el-icon-wallet' }
       }
     ]
   }

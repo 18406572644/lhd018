@@ -13,14 +13,26 @@
     </div>
 
     <el-card class="card form-card" shadow="never">
-      <el-radio-group v-model="form.type" class="type-switch">
-        <el-radio-button label="expense" class="type-btn">
+      <div class="type-switch">
+        <button
+          class="type-btn"
+          :class="{ active: form.type === 'expense', 'expense-btn': form.type === 'expense' }"
+          @click="switchType('expense')"
+        >
+          <span class="type-icon">📉</span>
           <span class="type-label">支出</span>
-        </el-radio-button>
-        <el-radio-button label="income" class="type-btn">
+          <span class="type-indicator" v-if="form.type === 'expense'"></span>
+        </button>
+        <button
+          class="type-btn"
+          :class="{ active: form.type === 'income', 'income-btn': form.type === 'income' }"
+          @click="switchType('income')"
+        >
+          <span class="type-icon">📈</span>
           <span class="type-label">收入</span>
-        </el-radio-button>
-      </el-radio-group>
+          <span class="type-indicator" v-if="form.type === 'income'"></span>
+        </button>
+      </div>
 
       <div class="amount-section">
         <span class="currency">¥</span>
@@ -126,6 +138,8 @@ export default {
         amount: '',
         categoryId: '',
         categoryName: '',
+        accountId: '',
+        accountName: '',
         remark: '',
         date: formatDate(new Date())
       }
@@ -167,6 +181,13 @@ export default {
     },
     getCategory(id) {
       return this.categories.find(c => c.id === id)
+    },
+    switchType(type) {
+      if (this.form.type !== type) {
+        this.form.type = type
+        this.form.categoryId = ''
+        this.form.categoryName = ''
+      }
     },
     selectCategory(cat) {
       this.form.categoryId = cat.id
@@ -241,48 +262,75 @@ export default {
   margin-bottom: 24px;
   gap: 12px;
   
-  ::v-deep .el-radio-button {
+  .type-btn {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px 0;
+    font-size: 16px;
+    font-weight: 500;
+    border-radius: 12px;
+    border: 2px solid #e4e7ed;
+    background: #f5f7fa;
+    color: $text-regular;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    outline: none;
     
-    .el-radio-button__inner {
-      width: 100%;
-      padding: 14px 0;
-      font-size: 16px;
+    &:hover {
+      background: #e8eaed;
+      color: $text-primary;
+      transform: translateY(-2px);
+    }
+    
+    &:active {
+      transform: translateY(0);
+    }
+    
+    .type-icon {
+      font-size: 24px;
+    }
+    
+    .type-label {
+      font-size: 15px;
       font-weight: 500;
-      border-radius: 10px !important;
-      border: 2px solid transparent;
-      background: #f5f7fa;
-      color: $text-regular;
-      transition: all 0.3s ease;
+    }
+    
+    .type-indicator {
+      position: absolute;
+      bottom: -1px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 40px;
+      height: 4px;
+      border-radius: 2px;
+    }
+    
+    &.active.expense-btn {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+      color: #fff;
+      border-color: #ff6b6b;
+      box-shadow: 0 6px 20px rgba(255, 107, 107, 0.35);
       
-      &:hover {
-        background: #e8eaed;
-        color: $text-primary;
+      .type-indicator {
+        background: #fff;
       }
     }
     
-    &[value="expense"] {
-      .el-radio-button__inner.is-active {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
-        color: #fff;
-        border-color: #ff6b6b;
-        box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+    &.active.income-btn {
+      background: linear-gradient(135deg, #67C23A 0%, #52a82a 100%);
+      color: #fff;
+      border-color: #67C23A;
+      box-shadow: 0 6px 20px rgba(103, 194, 58, 0.35);
+      
+      .type-indicator {
+        background: #fff;
       }
     }
-    
-    &[value="income"] {
-      .el-radio-button__inner.is-active {
-        background: linear-gradient(135deg, #67C23A 0%, #52a82a 100%);
-        color: #fff;
-        border-color: #67C23A;
-        box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3);
-      }
-    }
-  }
-  
-  ::v-deep .el-radio-button:first-child .el-radio-button__inner {
-    border-right: 2px solid transparent;
-    margin-right: 0;
   }
 }
 
