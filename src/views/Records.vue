@@ -13,10 +13,11 @@
           <el-select v-model="filters.type" placeholder="全部" clearable style="width: 120px">
             <el-option label="收入" value="income" />
             <el-option label="支出" value="expense" />
+            <el-option label="转账" value="transfer" />
           </el-select>
         </el-form-item>
         <el-form-item label="分类">
-          <el-select v-model="filters.categoryId" placeholder="全部" clearable style="width: 140px">
+          <el-select v-model="filters.categoryId" placeholder="全部" clearable style="width: 140px" :disabled="filters.type === 'transfer'">
             <el-option
               v-for="cat in categories"
               :key="cat.id"
@@ -24,6 +25,18 @@
               :value="cat.id"
             >
               <span>{{ cat.icon }} {{ cat.name }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="账户">
+          <el-select v-model="filters.accountId" placeholder="全部" clearable style="width: 140px">
+            <el-option
+              v-for="account in availableAccounts"
+              :key="account.id"
+              :label="account.name"
+              :value="account.id"
+            >
+              <span>{{ account.icon }} {{ account.name }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -56,27 +69,34 @@
     </el-card>
 
     <el-row :gutter="16" class="stats-row" v-if="filteredRecords.length > 0">
-      <el-col :span="8">
+      <el-col :span="6">
         <div class="stat-card income-card">
           <div class="stat-label">总收入</div>
           <div class="stat-value">+{{ formatMoney(stats.income) }}</div>
           <div class="stat-count">{{ stats.incomeCount }} 笔</div>
         </div>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <div class="stat-card expense-card">
           <div class="stat-label">总支出</div>
           <div class="stat-value">-{{ formatMoney(stats.expense) }}</div>
           <div class="stat-count">{{ stats.expenseCount }} 笔</div>
         </div>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
+        <div class="stat-card transfer-card">
+          <div class="stat-label">转账</div>
+          <div class="stat-value">{{ formatMoney(0) }}</div>
+          <div class="stat-count">{{ stats.transferCount }} 笔</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
         <div class="stat-card balance-card">
           <div class="stat-label">净结余</div>
           <div class="stat-value" :class="stats.balance >= 0 ? 'positive' : 'negative'">
             {{ stats.balance >= 0 ? '+' : '' }}{{ formatMoney(stats.balance) }}
           </div>
-          <div class="stat-count">共 {{ filteredRecords.length }} 笔记录</div>
+          <div class="stat-count">共 {{ filteredRecords.length }} 笔</div>
         </div>
       </el-col>
     </el-row>
@@ -95,14 +115,36 @@
         </el-table-column>
         <el-table-column label="类型" width="80">
           <template slot-scope="scope">
-            <el-tag :type="scope.row.type === 'income' ? 'success' : 'danger'" size="mini">
-              {{ scope.row.type === 'income' ? '收入' : '支出' }}
+            <el-tag
+              :type="scope.row.type === 'income' ? 'success' : (scope.row.type === 'expense' ? 'danger' : 'warning')"
+              size="mini"
+            >
+              {{ scope.row.type === 'income' ? '收入' : (scope.row.type === 'expense' ? '支出' : '转账') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="分类" width="140">
+        <el-table-column label="分类/账户" min-width="200">
           <template slot-scope="scope">
-            <div class="category-cell">
+            <div v-if="scope.row.type === 'transfer'" class="transfer-cell">
+              <div class="transfer-accounts">
+                <span
+                  class="account-icon"
+                  :style="{ backgroundColor: getAccount(scope.row.fromAccountId)?.color + '20', color: getAccount(scope.row.fromAccountId)?.color }"
+                >
+                  {{ getAccount(scope.row.fromAccountId)?.icon }}
+                </span>
+                <span class="account-name">{{ scope.row.fromAccountName }}</span>
+                <i class="el-icon-right transfer-arrow"></i>
+                <span
+                  class="account-icon"
+                  :style="{ backgroundColor: getAccount(scope.row.toAccountId)?.color + '20', color: getAccount(scope.row.toAccountId)?.color }"
+                >
+                  {{ getAccount(scope.row.toAccountId)?.icon }}
+                </span>
+                <span class="account-name">{{ scope.row.toAccountName }}</span>
+              </div>
+            </div>
+            <div v-else class="category-cell">
               <span
                 class="cat-icon"
                 :style="{ backgroundColor: getCategory(scope.row.categoryId)?.color + '20', color: getCategory(scope.row.categoryId)?.color }"
@@ -113,9 +155,30 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="支付账户" width="120">
+          <template slot-scope="scope">
+            <div v-if="scope.row.type !== 'transfer' && scope.row.accountName" class="account-cell">
+              <span
+                class="account-icon"
+                :style="{ backgroundColor: getAccount(scope.row.accountId)?.color + '20', color: getAccount(scope.row.accountId)?.color }"
+              >
+                {{ getAccount(scope.row.accountId)?.icon }}
+              </span>
+              <span class="account-name">{{ scope.row.accountName }}</span>
+            </div>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="金额" width="120" align="right">
           <template slot-scope="scope">
-            <span :class="scope.row.type === 'income' ? 'text-income' : 'text-expense'" class="amount">
+            <span v-if="scope.row.type === 'transfer'" class="amount text-transfer">
+              {{ formatMoney(scope.row.amount) }}
+            </span>
+            <span
+              v-else
+              :class="scope.row.type === 'income' ? 'text-income' : 'text-expense'"
+              class="amount"
+            >
               {{ scope.row.type === 'income' ? '+' : '-' }}{{ formatMoney(scope.row.amount) }}
             </span>
           </template>
@@ -127,8 +190,12 @@
         </el-table-column>
         <el-table-column label="操作" width="140" fixed="right" align="center">
           <template slot-scope="scope">
-            <el-button size="mini" type="primary" icon="el-icon-edit" @click="handleEdit(scope.row)" />
-            <el-button size="mini" type="danger" icon="el-icon-delete" @click="handleDelete(scope.row)" />
+            <el-button
+              size="mini"
+              type="danger"
+              icon="el-icon-delete"
+              @click="handleDelete(scope.row)"
+            />
           </template>
         </el-table-column>
       </el-table>
@@ -147,7 +214,7 @@
     </el-card>
 
     <el-dialog
-      :title="isEdit ? '编辑记录' : '新增记录'"
+      title="新增记录"
       :visible.sync="dialogVisible"
       width="500px"
       :close-on-click-modal="false"
@@ -160,7 +227,7 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="分类" prop="categoryId">
-          <el-select v-model="form.categoryId" placeholder="请选择分类" style="width: 100%" @change="handleCategoryChange">
+          <el-select v-model="form.categoryId" placeholder="请选择分类" style="width: 100%;" @change="handleCategoryChange">
             <el-option
               v-for="cat in filteredCategories"
               :key="cat.id"
@@ -168,6 +235,19 @@
               :value="cat.id"
             >
               <span>{{ cat.icon }} {{ cat.name }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="支付账户" prop="accountId">
+          <el-select v-model="form.accountId" placeholder="请选择账户" style="width: 100%;" @change="handleAccountChange">
+            <el-option
+              v-for="account in availableAccounts"
+              :key="account.id"
+              :label="account.name + ' (余额: ' + formatMoney(account.balance) + ')'"
+              :value="account.id"
+            >
+              <span>{{ account.icon }} {{ account.name }}</span>
+              <span style="float: right; color: #909399;">{{ formatMoney(account.balance) }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -182,7 +262,7 @@
             type="date"
             placeholder="选择日期"
             value-format="yyyy-MM-dd"
-            style="width: 100%"
+            style="width: 100%;"
           />
         </el-form-item>
         <el-form-item label="备注">
@@ -205,7 +285,7 @@
 </template>
 
 <script>
-import { recordApi, categoryApi } from '@/api'
+import { recordApi, categoryApi, accountApi } from '@/api'
 import { formatMoney, formatDate } from '@/utils'
 
 export default {
@@ -215,9 +295,11 @@ export default {
       loading: false,
       records: [],
       categories: [],
+      accounts: [],
       filters: {
         type: '',
         categoryId: '',
+        accountId: '',
         dateRange: [],
         keyword: ''
       },
@@ -226,12 +308,12 @@ export default {
         pageSize: 20
       },
       dialogVisible: false,
-      isEdit: false,
       form: {
-        id: '',
         type: 'expense',
         categoryId: '',
         categoryName: '',
+        accountId: '',
+        accountName: '',
         amount: '',
         date: formatDate(new Date()),
         remark: ''
@@ -239,6 +321,7 @@ export default {
       rules: {
         type: [{ required: true, message: '请选择类型', trigger: 'change' }],
         categoryId: [{ required: true, message: '请选择分类', trigger: 'change' }],
+        accountId: [{ required: true, message: '请选择账户', trigger: 'change' }],
         amount: [
           { required: true, message: '请输入金额', trigger: 'blur' },
           { validator: this.validateAmount, trigger: 'blur' }
@@ -251,6 +334,9 @@ export default {
     filteredCategories() {
       return this.categories.filter(c => c.type === this.form.type)
     },
+    availableAccounts() {
+      return this.accounts.filter(a => !a.disabled && !a.hidden).sort((a, b) => a.sort - b.sort)
+    },
     filteredRecords() {
       let result = [...this.records]
       
@@ -262,6 +348,14 @@ export default {
         result = result.filter(r => r.categoryId === this.filters.categoryId)
       }
       
+      if (this.filters.accountId) {
+        result = result.filter(r => 
+          r.accountId === this.filters.accountId ||
+          r.fromAccountId === this.filters.accountId ||
+          r.toAccountId === this.filters.accountId
+        )
+      }
+      
       if (this.filters.dateRange && this.filters.dateRange.length === 2) {
         const [start, end] = this.filters.dateRange
         result = result.filter(r => r.date >= start && r.date <= end)
@@ -269,10 +363,16 @@ export default {
       
       if (this.filters.keyword) {
         const keyword = this.filters.keyword.toLowerCase()
-        result = result.filter(r => 
-          (r.remark && r.remark.toLowerCase().includes(keyword)) ||
-          r.categoryName.toLowerCase().includes(keyword)
-        )
+        result = result.filter(r => {
+          if (r.type === 'transfer') {
+            return (r.remark && r.remark.toLowerCase().includes(keyword)) ||
+                   r.fromAccountName?.toLowerCase().includes(keyword) ||
+                   r.toAccountName?.toLowerCase().includes(keyword)
+          }
+          return (r.remark && r.remark.toLowerCase().includes(keyword)) ||
+                 r.categoryName?.toLowerCase().includes(keyword) ||
+                 r.accountName?.toLowerCase().includes(keyword)
+        })
       }
       
       return result.sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -287,15 +387,18 @@ export default {
       let expense = 0
       let incomeCount = 0
       let expenseCount = 0
+      let transferCount = 0
       
       this.filteredRecords.forEach(r => {
         const amount = Number(r.amount)
         if (r.type === 'income') {
           income += amount
           incomeCount++
-        } else {
+        } else if (r.type === 'expense') {
           expense += amount
           expenseCount++
+        } else if (r.type === 'transfer') {
+          transferCount++
         }
       })
       
@@ -304,7 +407,8 @@ export default {
         expense,
         balance: income - expense,
         incomeCount,
-        expenseCount
+        expenseCount,
+        transferCount
       }
     }
   },
@@ -330,12 +434,14 @@ export default {
     async loadData() {
       this.loading = true
       try {
-        const [records, categories] = await Promise.all([
+        const [records, categories, accounts] = await Promise.all([
           recordApi.getRecords(),
-          categoryApi.getCategories()
+          categoryApi.getCategories(),
+          accountApi.getAccounts()
         ])
         this.records = records || []
         this.categories = categories || []
+        this.accounts = accounts || []
       } finally {
         this.loading = false
       }
@@ -343,10 +449,19 @@ export default {
     getCategory(id) {
       return this.categories.find(c => c.id === id)
     },
+    getAccount(id) {
+      return this.accounts.find(a => a.id === id)
+    },
     handleCategoryChange(id) {
       const cat = this.getCategory(id)
       if (cat) {
         this.form.categoryName = cat.name
+      }
+    },
+    handleAccountChange(id) {
+      const account = this.getAccount(id)
+      if (account) {
+        this.form.accountName = account.name
       }
     },
     handleSearch() {
@@ -356,6 +471,7 @@ export default {
       this.filters = {
         type: '',
         categoryId: '',
+        accountId: '',
         dateRange: [],
         keyword: ''
       }
@@ -374,17 +490,12 @@ export default {
         this.$message.success('导出成功')
       }
     },
-    handleEdit(record) {
-      this.isEdit = true
-      this.form = { ...record }
-      this.dialogVisible = true
-      this.$nextTick(() => {
-        this.$refs.form.clearValidate()
-      })
-    },
     async handleDelete(record) {
+      const confirmText = record.type === 'transfer' 
+        ? `确定要删除这条转账记录吗？这将同时恢复两个账户的余额。`
+        : `确定要删除这条记录吗？`
       try {
-        await this.$confirm(`确定要删除这条记录吗？`, '提示', {
+        await this.$confirm(confirmText, '提示', {
           confirmButtonText: '确定',
           cancelButtonText: '取消',
           type: 'warning'
@@ -399,21 +510,40 @@ export default {
     async handleSubmit() {
       this.$refs.form.validate(async valid => {
         if (valid) {
+          const account = this.getAccount(this.form.accountId)
+          if (this.form.type === 'expense' && account && account.balance < parseFloat(this.form.amount)) {
+            this.$message.error('账户余额不足')
+            return
+          }
+          
           const data = {
             ...this.form,
             amount: parseFloat(this.form.amount)
           }
-          let result
-          if (this.isEdit) {
-            result = await recordApi.updateRecord(data)
-          } else {
-            result = await recordApi.addRecord(data)
-          }
+          const result = await recordApi.addRecord(data)
           if (result) {
-            this.$message.success(this.isEdit ? '更新成功' : '创建成功')
+            this.$message.success('创建成功')
             this.dialogVisible = false
+            this.resetForm()
             this.loadData()
           }
+        }
+      })
+    },
+    resetForm() {
+      this.form = {
+        type: 'expense',
+        categoryId: '',
+        categoryName: '',
+        accountId: '',
+        accountName: '',
+        amount: '',
+        date: formatDate(new Date()),
+        remark: ''
+      }
+      this.$nextTick(() => {
+        if (this.$refs.form) {
+          this.$refs.form.clearValidate()
         }
       })
     }
@@ -500,6 +630,18 @@ export default {
         }
       }
       
+      &.transfer-card {
+        background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+        
+        .stat-label, .stat-count {
+          color: rgba(0, 0, 0, 0.6);
+        }
+        
+        .stat-value {
+          color: #d97706;
+        }
+      }
+      
       &.balance-card {
         background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
         
@@ -542,9 +684,63 @@ export default {
     }
   }
   
+  .transfer-cell {
+    .transfer-accounts {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      
+      .account-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+      }
+      
+      .account-name {
+        font-size: 13px;
+        color: $text-regular;
+      }
+      
+      .transfer-arrow {
+        color: $primary-color;
+        font-size: 12px;
+      }
+    }
+  }
+  
+  .account-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    
+    .account-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+    
+    .account-name {
+      font-size: 13px;
+      color: $text-regular;
+    }
+  }
+  
   .amount {
     font-weight: 600;
     font-size: 15px;
+    
+    &.text-transfer {
+      color: $warning-color;
+    }
   }
   
   .remark {
