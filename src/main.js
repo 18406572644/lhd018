@@ -19,6 +19,7 @@ import {
   FormItem,
   MessageBox,
   Message,
+  Loading,
   Tabs,
   TabPane,
   Card,
@@ -72,6 +73,7 @@ Vue.use(Progress)
 
 Vue.prototype.$message = Message
 Vue.prototype.$confirm = MessageBox.confirm
+Vue.prototype.$loading = Loading.service
 
 Vue.config.productionTip = false
 

@@ -484,6 +484,30 @@ ipcMain.handle('export-csv', async (event, records) => {
   return false
 })
 
+function safeFormatNumber(value, decimals = 2) {
+  if (value === undefined || value === null || isNaN(value)) {
+    return '0.00'
+  }
+  if (!isFinite(value)) {
+    return value > 0 ? '+∞' : '-∞'
+  }
+  return Number(value).toFixed(decimals)
+}
+
+function safeIsPositive(value) {
+  if (value === undefined || value === null || isNaN(value)) {
+    return false
+  }
+  return value > 0
+}
+
+function safeIsNonNegative(value) {
+  if (value === undefined || value === null || isNaN(value)) {
+    return true
+  }
+  return value >= 0
+}
+
 async function handleExportPdf(data) {
   try {
     const { jsPDF } = require('jspdf')
@@ -540,11 +564,12 @@ async function handleExportPdf(data) {
         
         doc.setFontSize(14)
         doc.setTextColor(103, 194, 58)
-        doc.text(`¥${Number(data.overview.income).toFixed(2)}`, margin + 10, yPos + 24)
+        doc.text(`¥${safeFormatNumber(data.overview.income)}`, margin + 10, yPos + 24)
         doc.setTextColor(245, 108, 108)
-        doc.text(`¥${Number(data.overview.expense).toFixed(2)}`, margin + 60, yPos + 24)
-        doc.setTextColor(data.overview.balance >= 0 ? 103 : 245, data.overview.balance >= 0 ? 194 : 108, data.overview.balance >= 0 ? 58 : 108)
-        doc.text(`¥${Number(data.overview.balance).toFixed(2)}`, margin + 110, yPos + 24)
+        doc.text(`¥${safeFormatNumber(data.overview.expense)}`, margin + 60, yPos + 24)
+        const balancePositive = safeIsNonNegative(data.overview.balance)
+        doc.setTextColor(balancePositive ? 103 : 245, balancePositive ? 194 : 108, balancePositive ? 58 : 108)
+        doc.text(`¥${safeFormatNumber(data.overview.balance)}`, margin + 110, yPos + 24)
         doc.setTextColor(80, 80, 80)
         doc.text(`${data.overview.count} 笔`, margin + 160, yPos + 24)
         yPos += 45
@@ -570,21 +595,25 @@ async function handleExportPdf(data) {
         doc.setFontSize(11)
         doc.setTextColor(103, 194, 58)
         doc.text('收入', margin + 10, yPos + 25)
-        doc.text(`¥${Number(data.comparison.income.current).toFixed(2)}`, margin + 50, yPos + 25)
-        doc.text(`¥${Number(data.comparison.income.prev).toFixed(2)}`, margin + 90, yPos + 25)
-        doc.setTextColor(data.comparison.income.mom >= 0 ? 103 : 245, data.comparison.income.mom >= 0 ? 194 : 108, data.comparison.income.mom >= 0 ? 58 : 108)
-        doc.text(`${data.comparison.income.mom >= 0 ? '+' : ''}${data.comparison.income.mom.toFixed(1)}%`, margin + 130, yPos + 25)
-        doc.setTextColor(data.comparison.income.yoy >= 0 ? 103 : 245, data.comparison.income.yoy >= 0 ? 194 : 108, data.comparison.income.yoy >= 0 ? 58 : 108)
-        doc.text(`${data.comparison.income.yoy >= 0 ? '+' : ''}${data.comparison.income.yoy.toFixed(1)}%`, margin + 170, yPos + 25)
+        doc.text(`¥${safeFormatNumber(data.comparison.income.current)}`, margin + 50, yPos + 25)
+        doc.text(`¥${safeFormatNumber(data.comparison.income.prev)}`, margin + 90, yPos + 25)
+        const incomeMomPositive = safeIsNonNegative(data.comparison.income.mom)
+        const incomeYoyPositive = safeIsNonNegative(data.comparison.income.yoy)
+        doc.setTextColor(incomeMomPositive ? 103 : 245, incomeMomPositive ? 194 : 108, incomeMomPositive ? 58 : 108)
+        doc.text(`${incomeMomPositive ? '+' : ''}${safeFormatNumber(data.comparison.income.mom, 1)}%`, margin + 130, yPos + 25)
+        doc.setTextColor(incomeYoyPositive ? 103 : 245, incomeYoyPositive ? 194 : 108, incomeYoyPositive ? 58 : 108)
+        doc.text(`${incomeYoyPositive ? '+' : ''}${safeFormatNumber(data.comparison.income.yoy, 1)}%`, margin + 170, yPos + 25)
         
         doc.setTextColor(245, 108, 108)
         doc.text('支出', margin + 10, yPos + 40)
-        doc.text(`¥${Number(data.comparison.expense.current).toFixed(2)}`, margin + 50, yPos + 40)
-        doc.text(`¥${Number(data.comparison.expense.prev).toFixed(2)}`, margin + 90, yPos + 40)
-        doc.setTextColor(data.comparison.expense.mom <= 0 ? 103 : 245, data.comparison.expense.mom <= 0 ? 194 : 108, data.comparison.expense.mom <= 0 ? 58 : 108)
-        doc.text(`${data.comparison.expense.mom >= 0 ? '+' : ''}${data.comparison.expense.mom.toFixed(1)}%`, margin + 130, yPos + 40)
-        doc.setTextColor(data.comparison.expense.yoy <= 0 ? 103 : 245, data.comparison.expense.yoy <= 0 ? 194 : 108, data.comparison.expense.yoy <= 0 ? 58 : 108)
-        doc.text(`${data.comparison.expense.yoy >= 0 ? '+' : ''}${data.comparison.expense.yoy.toFixed(1)}%`, margin + 170, yPos + 40)
+        doc.text(`¥${safeFormatNumber(data.comparison.expense.current)}`, margin + 50, yPos + 40)
+        doc.text(`¥${safeFormatNumber(data.comparison.expense.prev)}`, margin + 90, yPos + 40)
+        const expenseMomGood = !safeIsPositive(data.comparison.expense.mom)
+        const expenseYoyGood = !safeIsPositive(data.comparison.expense.yoy)
+        doc.setTextColor(expenseMomGood ? 103 : 245, expenseMomGood ? 194 : 108, expenseMomGood ? 58 : 108)
+        doc.text(`${safeIsNonNegative(data.comparison.expense.mom) ? '+' : ''}${safeFormatNumber(data.comparison.expense.mom, 1)}%`, margin + 130, yPos + 40)
+        doc.setTextColor(expenseYoyGood ? 103 : 245, expenseYoyGood ? 194 : 108, expenseYoyGood ? 58 : 108)
+        doc.text(`${safeIsNonNegative(data.comparison.expense.yoy) ? '+' : ''}${safeFormatNumber(data.comparison.expense.yoy, 1)}%`, margin + 170, yPos + 40)
         yPos += 65
       }
       
@@ -607,7 +636,7 @@ async function handleExportPdf(data) {
         doc.text('占比', margin + 140, yPos + 8)
         yPos += 8
         
-        const maxExpense = Math.max(...data.expenseRank.map(i => i.amount))
+        const maxExpense = Math.max(...data.expenseRank.map(i => i.amount)) || 1
         data.expenseRank.slice(0, 10).forEach((item, index) => {
           if (yPos > pageHeight - 20) {
             doc.addPage()
@@ -624,7 +653,7 @@ async function handleExportPdf(data) {
           doc.setTextColor(60, 60, 60)
           doc.text(item.name, margin + 35, yPos + 6)
           doc.setTextColor(245, 108, 108)
-          doc.text(`¥${Number(item.amount).toFixed(2)}`, margin + 90, yPos + 6)
+          doc.text(`¥${safeFormatNumber(item.amount)}`, margin + 90, yPos + 6)
           doc.setTextColor(100, 100, 100)
           doc.text(`${item.percent}%`, margin + 140, yPos + 6)
           yPos += 10
@@ -651,7 +680,7 @@ async function handleExportPdf(data) {
         doc.text('占比', margin + 140, yPos + 8)
         yPos += 8
         
-        const maxIncome = Math.max(...data.incomeRank.map(i => i.amount))
+        const maxIncome = Math.max(...data.incomeRank.map(i => i.amount)) || 1
         data.incomeRank.slice(0, 10).forEach((item, index) => {
           if (yPos > pageHeight - 20) {
             doc.addPage()
@@ -668,7 +697,7 @@ async function handleExportPdf(data) {
           doc.setTextColor(60, 60, 60)
           doc.text(item.name, margin + 35, yPos + 6)
           doc.setTextColor(103, 194, 58)
-          doc.text(`¥${Number(item.amount).toFixed(2)}`, margin + 90, yPos + 6)
+          doc.text(`¥${safeFormatNumber(item.amount)}`, margin + 90, yPos + 6)
           doc.setTextColor(100, 100, 100)
           doc.text(`${item.percent}%`, margin + 140, yPos + 6)
           yPos += 10
@@ -692,11 +721,11 @@ async function handleExportPdf(data) {
         
         doc.setFontSize(11)
         doc.setTextColor(80, 80, 80)
-        doc.text(`下月预测收入: ¥${Number(data.prediction.income).toFixed(2)}`, margin + 10, yPos + 10)
+        doc.text(`下月预测收入: ¥${safeFormatNumber(data.prediction.income)}`, margin + 10, yPos + 10)
         doc.setTextColor(103, 194, 58)
-        doc.text(`下月预测支出: ¥${Number(data.prediction.expense).toFixed(2)}`, margin + 10, yPos + 20)
+        doc.text(`下月预测支出: ¥${safeFormatNumber(data.prediction.expense)}`, margin + 10, yPos + 20)
         doc.setTextColor(245, 108, 108)
-        doc.text(`预测结余: ¥${Number(data.prediction.balance).toFixed(2)}`, margin + 100, yPos + 15)
+        doc.text(`预测结余: ¥${safeFormatNumber(data.prediction.balance)}`, margin + 100, yPos + 15)
         yPos += 35
       }
       
@@ -734,7 +763,7 @@ async function handleExportPdf(data) {
           doc.setTextColor(60, 60, 60)
           doc.text(r.categoryName, margin + 65, yPos + 5)
           doc.setTextColor(r.type === 'income' ? 103 : 245, r.type === 'income' ? 194 : 108, r.type === 'income' ? 58 : 108)
-          doc.text(`¥${Number(r.amount).toFixed(2)}`, margin + 110, yPos + 5)
+          doc.text(`¥${safeFormatNumber(r.amount)}`, margin + 110, yPos + 5)
           doc.setTextColor(100, 100, 100)
           doc.text(r.remark || '-', margin + 150, yPos + 5)
           yPos += 7
