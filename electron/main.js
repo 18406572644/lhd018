@@ -199,12 +199,12 @@ ipcMain.handle('delete-category', (event, id) => {
 })
 
 const defaultAccounts = [
-  { id: 'a1', name: '现金', type: 'cash', icon: '💵', color: '#27ae60', balance: 0, initialBalance: 0, accountNo: '', sort: 1, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: null },
-  { id: 'a2', name: '储蓄卡', type: 'debit', icon: '🏦', color: '#3498db', balance: 0, initialBalance: 0, accountNo: '', sort: 2, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: null },
+  { id: 'a1', name: '现金', type: 'cash', icon: '💵', color: '#27ae60', balance: 0, initialBalance: 0, accountNo: '', sort: 1, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: 0 },
+  { id: 'a2', name: '储蓄卡', type: 'debit', icon: '🏦', color: '#3498db', balance: 0, initialBalance: 0, accountNo: '', sort: 2, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: 0 },
   { id: 'a3', name: '信用卡', type: 'credit', icon: '💳', color: '#e74c3c', balance: 0, initialBalance: 0, accountNo: '', sort: 3, hidden: false, disabled: false, billDay: 10, dueDay: 25, creditLimit: 10000 },
-  { id: 'a4', name: '支付宝', type: 'alipay', icon: '📱', color: '#1677ff', balance: 0, initialBalance: 0, accountNo: '', sort: 4, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: null },
-  { id: 'a5', name: '微信', type: 'wechat', icon: '💬', color: '#07c160', balance: 0, initialBalance: 0, accountNo: '', sort: 5, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: null },
-  { id: 'a6', name: '投资账户', type: 'investment', icon: '📈', color: '#9b59b6', balance: 0, initialBalance: 0, accountNo: '', sort: 6, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: null }
+  { id: 'a4', name: '支付宝', type: 'alipay', icon: '📱', color: '#1677ff', balance: 0, initialBalance: 0, accountNo: '', sort: 4, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: 0 },
+  { id: 'a5', name: '微信', type: 'wechat', icon: '💬', color: '#07c160', balance: 0, initialBalance: 0, accountNo: '', sort: 5, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: 0 },
+  { id: 'a6', name: '投资账户', type: 'investment', icon: '📈', color: '#9b59b6', balance: 0, initialBalance: 0, accountNo: '', sort: 6, hidden: false, disabled: false, billDay: null, dueDay: null, creditLimit: 0 }
 ]
 
 function calculateAccountBalance(account, records) {
@@ -259,6 +259,14 @@ ipcMain.handle('get-accounts', () => {
     writeJsonFile(filePath, accounts)
   }
   
+  accounts = accounts.map(account => ({
+    ...account,
+    initialBalance: Number(account.initialBalance) || 0,
+    creditLimit: account.type === 'credit' ? (Number(account.creditLimit) || 0) : 0,
+    balance: Number(account.balance) || 0
+  }))
+  writeJsonFile(filePath, accounts)
+  
   return recalculateAllAccountBalances()
 })
 
@@ -267,7 +275,9 @@ ipcMain.handle('add-account', (event, account) => {
   const accounts = readJsonFile(filePath) || defaultAccounts
   account.id = Date.now().toString()
   account.sort = accounts.length + 1
-  account.balance = Number(account.initialBalance) || 0
+  account.initialBalance = Number(account.initialBalance) || 0
+  account.balance = account.initialBalance
+  account.creditLimit = account.type === 'credit' ? (Number(account.creditLimit) || 0) : 0
   account.hidden = account.hidden || false
   account.disabled = account.disabled || false
   accounts.push(account)
@@ -280,6 +290,8 @@ ipcMain.handle('update-account', (event, account) => {
   const accounts = readJsonFile(filePath) || []
   const index = accounts.findIndex(a => a.id === account.id)
   if (index !== -1) {
+    account.initialBalance = Number(account.initialBalance) || 0
+    account.creditLimit = account.type === 'credit' ? (Number(account.creditLimit) || 0) : 0
     accounts[index] = { ...accounts[index], ...account }
     writeJsonFile(filePath, accounts)
     return recalculateAllAccountBalances()

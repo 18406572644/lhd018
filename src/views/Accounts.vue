@@ -196,7 +196,15 @@
           <span class="color-preview" :style="{ backgroundColor: form.color }"></span>
         </el-form-item>
         <el-form-item label="初始余额">
-          <el-input-number v-model="form.initialBalance" :precision="2" :min="0" style="width: 100%;" />
+          <el-input-number
+            v-model="form.initialBalance"
+            :precision="2"
+            :min="0"
+            :step="100"
+            :controls="true"
+            :controls-position="right"
+            style="width: 100%;"
+          />
         </el-form-item>
         <el-form-item label="账号">
           <el-input v-model="form.accountNo" placeholder="选填，如卡号、支付宝账号等" maxlength="30" />
@@ -204,7 +212,15 @@
         <template v-if="form.type === 'credit'">
           <el-divider content-position="left">信用卡设置</el-divider>
           <el-form-item label="信用额度">
-            <el-input-number v-model="form.creditLimit" :precision="2" :min="0" style="width: 100%;" />
+            <el-input-number
+              v-model="form.creditLimit"
+              :precision="2"
+              :min="0"
+              :step="1000"
+              :controls="true"
+              :controls-position="right"
+              style="width: 100%;"
+            />
           </el-form-item>
           <el-form-item label="账单日">
             <el-select v-model="form.billDay" placeholder="请选择账单日" style="width: 100%;">
@@ -259,7 +275,15 @@
           </el-select>
         </el-form-item>
         <el-form-item label="转账金额" prop="amount">
-          <el-input-number v-model="transferForm.amount" :precision="2" :min="0.01" style="width: 100%;" />
+          <el-input-number
+            v-model="transferForm.amount"
+            :precision="2"
+            :min="0.01"
+            :step="100"
+            :controls="true"
+            :controls-position="right"
+            style="width: 100%;"
+          />
         </el-form-item>
         <el-form-item label="转账日期" prop="date">
           <el-date-picker
@@ -315,7 +339,7 @@ export default {
         accountNo: '',
         billDay: null,
         dueDay: null,
-        creditLimit: null
+        creditLimit: 0
       },
       rules: {
         name: [{ required: true, message: '请输入账户名称', trigger: 'blur' }],
@@ -326,7 +350,7 @@ export default {
       transferForm: {
         fromAccountId: '',
         toAccountId: '',
-        amount: '',
+        amount: null,
         date: formatDate(new Date()),
         remark: ''
       },
@@ -399,7 +423,7 @@ export default {
         accountNo: '',
         billDay: null,
         dueDay: null,
-        creditLimit: null
+        creditLimit: 0
       }
       this.dialogVisible = true
       this.$nextTick(() => {
@@ -412,7 +436,13 @@ export default {
       if (this.form.type !== 'credit') {
         this.form.billDay = null
         this.form.dueDay = null
-        this.form.creditLimit = null
+        this.form.creditLimit = 0
+      }
+      if (this.form.initialBalance === null || this.form.initialBalance === undefined) {
+        this.form.initialBalance = 0
+      }
+      if (this.form.creditLimit === null || this.form.creditLimit === undefined) {
+        this.form.creditLimit = 0
       }
       this.dialogVisible = true
     },
@@ -510,7 +540,7 @@ export default {
       this.transferForm = {
         fromAccountId: '',
         toAccountId: '',
-        amount: '',
+        amount: null,
         date: formatDate(new Date()),
         remark: ''
       }
