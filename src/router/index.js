@@ -1,0 +1,46 @@
+import Vue from 'vue'
+import VueRouter from 'vue-router'
+import Layout from '@/views/Layout.vue'
+
+Vue.use(VueRouter)
+
+const routes = [
+  {
+    path: '/',
+    component: Layout,
+    redirect: '/quick',
+    children: [
+      {
+        path: 'quick',
+        name: 'QuickAdd',
+        component: () => import('@/views/QuickAdd.vue'),
+        meta: { title: '快速记账', icon: 'el-icon-edit-outline' }
+      },
+      {
+        path: 'records',
+        name: 'Records',
+        component: () => import('@/views/Records.vue'),
+        meta: { title: '账单明细', icon: 'el-icon-document' }
+      },
+      {
+        path: 'statistics',
+        name: 'Statistics',
+        component: () => import('@/views/Statistics.vue'),
+        meta: { title: '统计图表', icon: 'el-icon-pie-chart' }
+      },
+      {
+        path: 'categories',
+        name: 'Categories',
+        component: () => import('@/views/Categories.vue'),
+        meta: { title: '分类管理', icon: 'el-icon-folder-opened' }
+      }
+    ]
+  }
+]
+
+const router = new VueRouter({
+  mode: 'hash',
+  routes
+})
+
+export default router
