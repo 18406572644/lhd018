@@ -44,6 +44,11 @@
           :class="{ 'expense-input': form.type === 'expense', 'income-input': form.type === 'income' }"
           ref="amountInput"
         />
+        <div v-if="ocrData && ocrData.fields && ocrData.fields.amount" class="ocr-confidence">
+          <el-tag :type="getConfidenceType(ocrData.fields.amount.confidence)" size="mini">
+            置信度 {{ (ocrData.fields.amount.confidence * 100).toFixed(0) }}%
+          </el-tag>
+        </div>
       </div>
 
       <div class="categories-section">
@@ -83,6 +88,94 @@
         />
       </div>
 
+      <div class="receipt-section">
+        <div class="section-title">
+          票据影像
+          <el-button type="text" size="mini" icon="el-icon-camera" @click="showOcrTip = !showOcrTip">
+            OCR 智能识别
+          </el-button>
+        </div>
+        
+        <div v-if="showOcrTip" class="ocr-tip">
+          <el-alert
+            title="上传票据图片后将自动识别金额、日期、商家等信息"
+            type="info"
+            :closable="false"
+            show-icon
+          />
+        </div>
+
+        <ReceiptUpload
+          ref="receiptUpload"
+          :record-id="currentRecordId"
+          :auto-upload="true"
+          :max-files="10"
+          @upload-success="handleReceiptUploaded"
+          @image-removed="handleReceiptRemoved"
+        />
+
+        <div v-if="uploadedReceipts.length > 0" class="uploaded-receipts">
+          <div class="receipt-thumbnails">
+            <div
+              v-for="(receipt, index) in uploadedReceipts"
+              :key="receipt.id"
+              class="receipt-thumbnail"
+              :class="{ active: selectedReceiptIndex === index }"
+              @click="openReceiptViewer(index)"
+            >
+              <img :src="receipt.thumbnailUrl" :alt="receipt.filename" />
+              <div v-if="receipt.ocrStatus === 'pending'" class="ocr-status pending">
+                <i class="el-icon-loading"></i> 识别中
+              </div>
+              <div v-else-if="receipt.ocrStatus === 'success'" class="ocr-status success">
+                <i class="el-icon-check"></i> 已识别
+              </div>
+              <div v-else-if="receipt.ocrStatus === 'failed'" class="ocr-status failed">
+                <i class="el-icon-close"></i> 识别失败
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="ocrData && ocrData.fields" class="ocr-result-section">
+        <div class="section-title">
+          OCR 识别结果
+          <el-tag size="mini" type="info">可手动修正</el-tag>
+        </div>
+        <el-form :model="ocrData.fields" label-width="80px" size="small">
+          <el-form-item label="金额" :class="{ 'low-confidence': isLowConfidence('amount') }">
+            <el-input v-model="ocrData.fields.amount.value" @blur="applyOcrToForm" />
+            <span v-if="isLowConfidence('amount')" class="low-confidence-tip">
+              <i class="el-icon-warning"></i> 请核对
+            </span>
+          </el-form-item>
+          <el-form-item label="日期" :class="{ 'low-confidence': isLowConfidence('date') }">
+            <el-date-picker
+              v-model="ocrData.fields.date.value"
+              type="date"
+              format="yyyy-MM-dd"
+              value-format="yyyy-MM-dd"
+              @change="applyOcrToForm"
+            />
+          </el-form-item>
+          <el-form-item label="商家" :class="{ 'low-confidence': isLowConfidence('merchant') }">
+            <el-input v-model="ocrData.fields.merchant.value" @blur="applyOcrToForm" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="ocrData.fields.remark.value" @blur="applyOcrToForm" />
+          </el-form-item>
+        </el-form>
+        <div class="ocr-actions">
+          <el-button size="small" type="primary" icon="el-icon-check" @click="applyAllOcrData">
+            应用到表单
+          </el-button>
+          <el-button size="small" icon="el-icon-refresh" @click="reRecognizeReceipt">
+            重新识别
+          </el-button>
+        </div>
+      </div>
+
       <div class="actions">
         <el-button size="large" @click="resetForm">重置</el-button>
         <el-button
@@ -111,6 +204,9 @@
             <div class="record-info">
               <div class="record-category">{{ getCategory(record.categoryId)?.name }}</div>
               <div class="record-remark" v-if="record.remark">{{ record.remark }}</div>
+              <div v-if="record.receiptIds && record.receiptIds.length > 0" class="record-receipts">
+                <i class="el-icon-picture"></i> {{ record.receiptIds.length }} 张票据
+              </div>
             </div>
           </div>
           <div class="record-amount" :class="record.type">
@@ -119,15 +215,31 @@
         </div>
       </el-card>
     </div>
+
+    <ReceiptViewer
+      :visible="viewerVisible"
+      :images="viewerImages"
+      :receipts="uploadedReceipts"
+      :start-index="selectedReceiptIndex"
+      title="票据预览"
+      @close="viewerVisible = false"
+      @delete="handleDeleteReceipt"
+    />
   </div>
 </template>
 
 <script>
-import { recordApi, categoryApi } from '@/api'
+import { recordApi, categoryApi, receiptApi, ocrApi } from '@/api'
 import { formatMoney, formatDate } from '@/utils'
+import ReceiptUpload from '@/components/ReceiptUpload.vue'
+import ReceiptViewer from '@/components/ReceiptViewer.vue'
 
 export default {
   name: 'QuickAdd',
+  components: {
+    ReceiptUpload,
+    ReceiptViewer
+  },
   data() {
     return {
       currentDate: formatDate(new Date()),
@@ -142,7 +254,15 @@ export default {
         accountName: '',
         remark: '',
         date: formatDate(new Date())
-      }
+      },
+      showOcrTip: false,
+      uploadedReceipts: [],
+      currentRecordId: null,
+      ocrData: null,
+      currentOcrReceiptId: null,
+      viewerVisible: false,
+      selectedReceiptIndex: 0,
+      lowConfidenceThreshold: 0.7
     }
   },
   computed: {
@@ -155,6 +275,9 @@ export default {
     todayRecords() {
       const today = formatDate(new Date())
       return this.records.filter(r => r.date === today).slice(0, 10)
+    },
+    viewerImages() {
+      return this.uploadedReceipts.map(r => r.imageUrl || r.thumbnailUrl)
     }
   },
   watch: {
@@ -193,16 +316,148 @@ export default {
       this.form.categoryId = cat.id
       this.form.categoryName = cat.name
     },
+    async handleReceiptUploaded(receipt) {
+      this.uploadedReceipts.push(receipt)
+      this.$message.success('图片上传成功')
+      this.$nextTick(() => {
+        this.startOcrRecognition(receipt.id)
+      })
+    },
+    handleReceiptRemoved(receiptId) {
+      const index = this.uploadedReceipts.findIndex(r => r.id === receiptId)
+      if (index !== -1) {
+        this.uploadedReceipts.splice(index, 1)
+        if (this.currentOcrReceiptId === receiptId) {
+          this.ocrData = null
+          this.currentOcrReceiptId = null
+        }
+      }
+    },
+    async startOcrRecognition(receiptId) {
+      const receipt = this.uploadedReceipts.find(r => r.id === receiptId)
+      if (!receipt) return
+
+      receipt.ocrStatus = 'pending'
+
+      try {
+        const result = await ocrApi.recognize(receiptId)
+        if (result && result.success) {
+          receipt.ocrStatus = 'success'
+          receipt.ocrData = result.data
+          this.ocrData = result.data
+          this.currentOcrReceiptId = receiptId
+          this.autoFillFromOcr(result.data)
+          this.$message.success('OCR 识别完成')
+        } else {
+          receipt.ocrStatus = 'failed'
+          this.$message.error('OCR 识别失败')
+        }
+      } catch (error) {
+        console.error('OCR recognition error:', error)
+        receipt.ocrStatus = 'failed'
+        this.$message.error('OCR 识别异常')
+      }
+    },
+    autoFillFromOcr(ocrData) {
+      const fields = ocrData.fields
+      if (!fields) return
+
+      if (fields.amount && fields.amount.value && !this.form.amount) {
+        this.form.amount = fields.amount.value
+      }
+      if (fields.date && fields.date.value && !this.form.date) {
+        this.form.date = fields.date.value
+        this.currentDate = fields.date.value
+      }
+      if (fields.merchant && fields.merchant.value) {
+        const existingRemark = this.form.remark || ''
+        const merchantRemark = fields.merchant.value
+        if (!existingRemark.includes(merchantRemark)) {
+          this.form.remark = existingRemark ? `${existingRemark} - ${merchantRemark}` : merchantRemark
+        }
+      }
+      if (fields.remark && fields.remark.value && !this.form.remark) {
+        this.form.remark = fields.remark.value
+      }
+
+      if (fields.items && fields.items.value && fields.items.value.length > 0) {
+        const itemsText = fields.items.value.map(item => `${item.name} x${item.quantity || 1}`).join(', ')
+        if (itemsText && !this.form.remark.includes(itemsText)) {
+          this.form.remark = this.form.remark ? `${this.form.remark} - ${itemsText}` : itemsText
+        }
+      }
+    },
+    applyOcrToForm() {
+      if (!this.ocrData || !this.ocrData.fields) return
+      this.autoFillFromOcr(this.ocrData)
+    },
+    applyAllOcrData() {
+      if (!this.ocrData || !this.ocrData.fields) return
+      const fields = this.ocrData.fields
+      
+      if (fields.amount && fields.amount.value) {
+        this.form.amount = fields.amount.value
+      }
+      if (fields.date && fields.date.value) {
+        this.form.date = fields.date.value
+        this.currentDate = fields.date.value
+      }
+      if (fields.merchant && fields.merchant.value) {
+        const merchantRemark = fields.merchant.value
+        this.form.remark = merchantRemark
+      }
+      if (fields.remark && fields.remark.value) {
+        this.form.remark = fields.remark.value
+      }
+
+      this.$message.success('已应用 OCR 识别结果')
+    },
+    async reRecognizeReceipt() {
+      if (this.currentOcrReceiptId) {
+        await this.startOcrRecognition(this.currentOcrReceiptId)
+      }
+    },
+    isLowConfidence(field) {
+      if (!this.ocrData || !this.ocrData.fields || !this.ocrData.fields[field]) {
+        return false
+      }
+      return this.ocrData.fields[field].confidence < this.lowConfidenceThreshold
+    },
+    getConfidenceType(confidence) {
+      if (confidence >= 0.8) return 'success'
+      if (confidence >= 0.6) return 'warning'
+      return 'danger'
+    },
+    openReceiptViewer(index) {
+      this.selectedReceiptIndex = index
+      this.viewerVisible = true
+    },
+    async handleDeleteReceipt(receiptId) {
+      try {
+        await receiptApi.deleteReceipt(receiptId)
+        this.handleReceiptRemoved(receiptId)
+        this.$message.success('删除成功')
+      } catch (error) {
+        console.error('Delete receipt error:', error)
+        this.$message.error('删除失败')
+      }
+    },
     async handleSubmit() {
       if (!this.canSubmit) return
       
       const record = {
         ...this.form,
-        amount: parseFloat(this.form.amount)
+        amount: parseFloat(this.form.amount),
+        receiptIds: this.uploadedReceipts.map(r => r.id)
       }
       
       const result = await recordApi.addRecord(record)
       if (result) {
+        if (this.uploadedReceipts.length > 0) {
+          for (const receipt of this.uploadedReceipts) {
+            await receiptApi.linkToRecord(receipt.id, result.id)
+          }
+        }
         this.$message.success('记账成功')
         this.resetForm()
         this.loadData()
@@ -218,6 +473,13 @@ export default {
         categoryName: '',
         remark: '',
         date: this.currentDate
+      }
+      this.uploadedReceipts = []
+      this.ocrData = null
+      this.currentOcrReceiptId = null
+      this.currentRecordId = null
+      if (this.$refs.receiptUpload) {
+        this.$refs.receiptUpload.clearAll()
       }
       this.$nextTick(() => {
         if (this.$refs.amountInput) {
@@ -362,6 +624,7 @@ export default {
 }
 
 .amount-section {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -399,6 +662,13 @@ export default {
     &.income-input ::v-deep .el-input__inner:focus {
       border-bottom-color: $income-color;
     }
+  }
+  
+  .ocr-confidence {
+    position: absolute;
+    right: 0;
+    top: 0;
+    margin: 0;
   }
 }
 
@@ -549,5 +819,126 @@ export default {
       color: $expense-color;
     }
   }
+  
+  .record-receipts {
+    font-size: 12px;
+    color: $text-secondary;
+    margin-top: 2px;
+    
+    i {
+      margin-right: 4px;
+    }
+  }
+}
+
+.ocr-confidence {
+  margin-left: 12px;
+  margin-top: 8px;
+}
+
+.receipt-section {
+  margin-bottom: 24px;
+}
+
+.ocr-tip {
+  margin-bottom: 16px;
+}
+
+.uploaded-receipts {
+  margin-top: 16px;
+}
+
+.receipt-thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.receipt-thumbnail {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+  
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  &:hover {
+    transform: scale(1.05);
+  }
+  
+  &.active {
+    border-color: $primary-color;
+    box-shadow: 0 2px 8px rgba($primary-color, 0.3);
+  }
+  
+  .ocr-status {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    font-size: 11px;
+    padding: 2px 4px;
+    text-align: center;
+    color: #fff;
+    
+    &.pending {
+      background: rgba(230, 162, 60, 0.9);
+    }
+    
+    &.success {
+      background: rgba(103, 194, 58, 0.9);
+    }
+    
+    &.failed {
+      background: rgba(245, 108, 108, 0.9);
+    }
+    
+    i {
+      margin-right: 2px;
+    }
+  }
+}
+
+.ocr-result-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  
+  .low-confidence {
+    .el-form-item__label {
+      color: #F56C6C;
+    }
+    
+    ::v-deep .el-input__inner {
+      border-color: #F56C6C;
+      background: #fef0f0;
+    }
+  }
+  
+  .low-confidence-tip {
+    color: #F56C6C;
+    font-size: 12px;
+    margin-left: 8px;
+    
+    i {
+      margin-right: 2px;
+    }
+  }
+}
+
+.ocr-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 </style>

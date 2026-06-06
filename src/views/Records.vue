@@ -183,13 +183,34 @@
             </span>
           </template>
         </el-table-column>
+        <el-table-column label="票据" width="100" align="center">
+          <template slot-scope="scope">
+            <div v-if="scope.row.receiptIds && scope.row.receiptIds.length > 0" class="receipt-cell">
+              <div
+                class="receipt-preview"
+                @click.stop="openReceipts(scope.row)"
+              >
+                <i class="el-icon-picture-outline"></i>
+                <span class="receipt-count">{{ scope.row.receiptIds.length }}</span>
+              </div>
+            </div>
+            <span v-else class="no-receipt">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="备注" show-overflow-tooltip>
           <template slot-scope="scope">
             <span class="remark">{{ scope.row.remark || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right" align="center">
+        <el-table-column label="操作" width="160" fixed="right" align="center">
           <template slot-scope="scope">
+            <el-button
+              size="mini"
+              type="primary"
+              icon="el-icon-picture"
+              @click.stop="openReceipts(scope.row)"
+              v-if="scope.row.receiptIds && scope.row.receiptIds.length > 0"
+            />
             <el-button
               size="mini"
               type="danger"
@@ -281,15 +302,28 @@
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </span>
     </el-dialog>
+
+    <ReceiptViewer
+      :visible="receiptViewerVisible"
+      :images="currentReceiptImages"
+      :receipts="currentReceipts"
+      :start-index="0"
+      title="票据详情"
+      @close="receiptViewerVisible = false"
+    />
   </div>
 </template>
 
 <script>
-import { recordApi, categoryApi, accountApi } from '@/api'
+import { recordApi, categoryApi, accountApi, receiptApi } from '@/api'
 import { formatMoney, formatDate } from '@/utils'
+import ReceiptViewer from '@/components/ReceiptViewer.vue'
 
 export default {
   name: 'Records',
+  components: {
+    ReceiptViewer
+  },
   data() {
     return {
       loading: false,
@@ -303,6 +337,9 @@ export default {
         dateRange: [],
         keyword: ''
       },
+      receiptViewerVisible: false,
+      currentReceipts: [],
+      currentReceiptImages: [],
       pagination: {
         page: 1,
         pageSize: 20
@@ -546,6 +583,37 @@ export default {
           this.$refs.form.clearValidate()
         }
       })
+    },
+    async openReceipts(record) {
+      if (!record.receiptIds || record.receiptIds.length === 0) {
+        this.$message.info('该记录没有关联票据')
+        return
+      }
+
+      try {
+        const receipts = []
+        const images = []
+        
+        for (const receiptId of record.receiptIds) {
+          const receipt = await receiptApi.getReceipt(receiptId)
+          if (receipt) {
+            receipts.push(receipt)
+            const imageData = await receiptApi.getImage(receiptId)
+            if (imageData) {
+              images.push(imageData.imageUrl)
+              receipt.imageUrl = imageData.imageUrl
+              receipt.thumbnailUrl = imageData.thumbnailUrl
+            }
+          }
+        }
+
+        this.currentReceipts = receipts
+        this.currentReceiptImages = images
+        this.receiptViewerVisible = true
+      } catch (error) {
+        console.error('Load receipts error:', error)
+        this.$message.error('加载票据失败')
+      }
     }
   }
 }
@@ -751,6 +819,34 @@ export default {
     padding: 20px;
     display: flex;
     justify-content: flex-end;
+  }
+  
+  .receipt-cell {
+    .receipt-preview {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: $primary-color;
+      color: #fff;
+      border-radius: 12px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      
+      &:hover {
+        background: darken($primary-color, 10%);
+        transform: scale(1.05);
+      }
+      
+      i {
+        font-size: 14px;
+      }
+    }
+    
+    .no-receipt {
+      color: $text-secondary;
+    }
   }
 }
 </style>

@@ -57,3 +57,33 @@ export const recurringBillApi = {
   getReminders: () => callIpc('get-recurring-reminders'),
   checkAndGenerate: () => callIpc('check-and-generate-recurring-bills')
 }
+
+export const receiptApi = {
+  saveImage: (imageData) => callIpc('save-receipt-image', imageData),
+  getReceipts: (filters) => callIpc('get-receipts', filters),
+  getReceipt: (id) => callIpc('get-receipt', id),
+  getImage: (id) => callIpc('get-receipt-image', id),
+  updateReceipt: (receiptData) => callIpc('update-receipt', receiptData),
+  deleteReceipt: (id) => callIpc('delete-receipt', id),
+  linkToRecord: (receiptId, recordId) => callIpc('link-receipt-to-record', receiptId, recordId),
+  unlinkFromRecord: (receiptId) => callIpc('unlink-receipt-from-record', receiptId),
+  addTag: (receiptId, tag) => callIpc('add-receipt-tag', receiptId, tag),
+  removeTag: (receiptId, tag) => callIpc('remove-receipt-tag', receiptId, tag),
+  getStats: () => callIpc('get-receipts-stats')
+}
+
+export const ocrApi = {
+  getConfig: () => callIpc('get-ocr-config'),
+  saveConfig: (config) => callIpc('save-ocr-config', config),
+  recognize: (receiptId) => callIpc('recognize-receipt', receiptId),
+  correctResult: (receiptId, correctedData) => callIpc('correct-ocr-result', receiptId, correctedData),
+  searchByText: (searchText) => callIpc('search-receipts-by-ocr', searchText)
+}
+
+export const reimbursementApi = {
+  getReimbursements: (filters) => callIpc('get-reimbursements', filters),
+  create: (data) => callIpc('create-reimbursement', data),
+  update: (reimbursementData) => callIpc('update-reimbursement', reimbursementData),
+  delete: (id) => callIpc('delete-reimbursement', id),
+  export: (reimbursementId) => callIpc('export-reimbursement', reimbursementId)
+}

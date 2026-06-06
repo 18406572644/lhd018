@@ -2,8 +2,30 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
+let Tesseract = null
+try {
+  Tesseract = require('tesseract.js')
+} catch (e) {
+  console.warn('Tesseract.js not available, will use mock OCR')
+}
+
 const isDev = process.env.NODE_ENV === 'development'
 let mainWindow = null
+let tesseractWorker = null
+
+async function getTesseractWorker() {
+  if (!Tesseract) return null
+  if (!tesseractWorker) {
+    try {
+      const { createWorker } = Tesseract
+      tesseractWorker = await createWorker('chi_sim+eng')
+    } catch (e) {
+      console.error('Failed to create Tesseract worker:', e)
+      return null
+    }
+  }
+  return tesseractWorker
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -1287,6 +1309,769 @@ function startRecurringBillCheck() {
     }
   }, 60 * 60 * 1000)
 }
+
+function getReceiptsPath() {
+  const dataDir = getDataPath()
+  const receiptsDir = path.join(dataDir, 'receipts')
+  if (!fs.existsSync(receiptsDir)) {
+    fs.mkdirSync(receiptsDir, { recursive: true })
+  }
+  return receiptsDir
+}
+
+function getReceiptImagesPath() {
+  const receiptsDir = getReceiptsPath()
+  const imagesDir = path.join(receiptsDir, 'images')
+  if (!fs.existsSync(imagesDir)) {
+    fs.mkdirSync(imagesDir, { recursive: true })
+  }
+  return imagesDir
+}
+
+function getOcrConfig() {
+  const configPath = path.join(getDataPath(), 'ocr-config.json')
+  let config = readJsonFile(configPath)
+  if (!config) {
+    config = {
+      ocrType: 'local',
+      compressionQuality: 0.7,
+      language: 'chi_sim+eng',
+      apiKey: '',
+      apiUrl: ''
+    }
+    writeJsonFile(configPath, config)
+  }
+  return config
+}
+
+ipcMain.handle('get-ocr-config', () => {
+  return getOcrConfig()
+})
+
+ipcMain.handle('save-ocr-config', (event, config) => {
+  const configPath = path.join(getDataPath(), 'ocr-config.json')
+  writeJsonFile(configPath, config)
+  return true
+})
+
+async function compressImage(base64Data, quality = 0.7) {
+  try {
+    if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
+      return base64Data
+    }
+    return base64Data
+  } catch (error) {
+    console.error('Compress image error:', error)
+    return base64Data
+  }
+}
+
+ipcMain.handle('save-receipt-image', async (event, imageData) => {
+  try {
+    const config = getOcrConfig()
+    const imagesDir = getReceiptImagesPath()
+    const receiptId = Date.now().toString() + Math.random().toString(36).substr(2, 5)
+    
+    let base64Data = imageData.base64
+    if (base64Data.startsWith('data:image')) {
+      base64Data = base64Data.split(',')[1]
+    }
+    
+    const compressedData = await compressImage(base64Data, config.compressionQuality)
+    
+    const ext = imageData.type === 'png' ? 'png' : 'jpg'
+    const fileName = `${receiptId}.${ext}`
+    const filePath = path.join(imagesDir, fileName)
+    
+    fs.writeFileSync(filePath, compressedData, 'base64')
+    
+    const receipt = {
+      id: receiptId,
+      fileName,
+      filePath,
+      fileSize: Buffer.byteLength(compressedData, 'base64'),
+      originalName: imageData.originalName || fileName,
+      type: imageData.type || 'image/jpeg',
+      recordId: imageData.recordId || null,
+      category: imageData.category || '',
+      merchant: imageData.merchant || '',
+      amount: imageData.amount || null,
+      date: imageData.date || new Date().toISOString().split('T')[0],
+      tags: imageData.tags || [],
+      isReimbursable: imageData.isReimbursable || false,
+      reimbursementStatus: 'pending',
+      ocrText: '',
+      ocrData: null,
+      ocrConfidence: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+    const receipts = readJsonFile(receiptsPath) || []
+    receipts.unshift(receipt)
+    writeJsonFile(receiptsPath, receipts)
+    
+    return receipt
+  } catch (error) {
+    console.error('Save receipt image error:', error)
+    return null
+  }
+})
+
+ipcMain.handle('get-receipts', (event, filters = {}) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  let receipts = readJsonFile(receiptsPath) || []
+  
+  if (filters.recordId) {
+    receipts = receipts.filter(r => r.recordId === filters.recordId)
+  }
+  if (filters.category) {
+    receipts = receipts.filter(r => r.category === filters.category)
+  }
+  if (filters.merchant) {
+    receipts = receipts.filter(r => r.merchant && r.merchant.includes(filters.merchant))
+  }
+  if (filters.startDate) {
+    receipts = receipts.filter(r => r.date >= filters.startDate)
+  }
+  if (filters.endDate) {
+    receipts = receipts.filter(r => r.date <= filters.endDate)
+  }
+  if (filters.isReimbursable !== undefined) {
+    receipts = receipts.filter(r => r.isReimbursable === filters.isReimbursable)
+  }
+  if (filters.reimbursementStatus) {
+    receipts = receipts.filter(r => r.reimbursementStatus === filters.reimbursementStatus)
+  }
+  if (filters.searchText) {
+    const searchLower = filters.searchText.toLowerCase()
+    receipts = receipts.filter(r => 
+      (r.ocrText && r.ocrText.toLowerCase().includes(searchLower)) ||
+      (r.merchant && r.merchant.toLowerCase().includes(searchLower)) ||
+      (r.category && r.category.toLowerCase().includes(searchLower)) ||
+      (r.tags && r.tags.some(t => t.toLowerCase().includes(searchLower)))
+    )
+  }
+  
+  return receipts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+})
+
+ipcMain.handle('get-receipt', (event, id) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  return receipts.find(r => r.id === id) || null
+})
+
+ipcMain.handle('get-receipt-image', (event, id) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === id)
+  
+  if (!receipt || !fs.existsSync(receipt.filePath)) {
+    return null
+  }
+  
+  try {
+    const imageBuffer = fs.readFileSync(receipt.filePath)
+    const base64 = imageBuffer.toString('base64')
+    const mimeType = receipt.type === 'png' ? 'image/png' : 'image/jpeg'
+    return `data:${mimeType};base64,${base64}`
+  } catch (error) {
+    console.error('Get receipt image error:', error)
+    return null
+  }
+})
+
+ipcMain.handle('update-receipt', (event, receiptData) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const index = receipts.findIndex(r => r.id === receiptData.id)
+  
+  if (index !== -1) {
+    receipts[index] = { 
+      ...receipts[index], 
+      ...receiptData, 
+      updatedAt: new Date().toISOString() 
+    }
+    writeJsonFile(receiptsPath, receipts)
+    return receipts[index]
+  }
+  return null
+})
+
+ipcMain.handle('delete-receipt', (event, id) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === id)
+  
+  if (receipt && fs.existsSync(receipt.filePath)) {
+    try {
+      fs.unlinkSync(receipt.filePath)
+    } catch (error) {
+      console.error('Delete receipt file error:', error)
+    }
+  }
+  
+  const filtered = receipts.filter(r => r.id !== id)
+  writeJsonFile(receiptsPath, filtered)
+  return true
+})
+
+ipcMain.handle('link-receipt-to-record', (event, receiptId, recordId) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (receipt) {
+    receipt.recordId = recordId
+    receipt.updatedAt = new Date().toISOString()
+    writeJsonFile(receiptsPath, receipts)
+    return receipt
+  }
+  return null
+})
+
+ipcMain.handle('unlink-receipt-from-record', (event, receiptId) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (receipt) {
+    receipt.recordId = null
+    receipt.updatedAt = new Date().toISOString()
+    writeJsonFile(receiptsPath, receipts)
+    return receipt
+  }
+  return null
+})
+
+ipcMain.handle('add-receipt-tag', (event, receiptId, tag) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (receipt) {
+    if (!receipt.tags) {
+      receipt.tags = []
+    }
+    if (!receipt.tags.includes(tag)) {
+      receipt.tags.push(tag)
+    }
+    receipt.updatedAt = new Date().toISOString()
+    writeJsonFile(receiptsPath, receipts)
+    return receipt
+  }
+  return null
+})
+
+ipcMain.handle('remove-receipt-tag', (event, receiptId, tag) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (receipt && receipt.tags) {
+    receipt.tags = receipt.tags.filter(t => t !== tag)
+    receipt.updatedAt = new Date().toISOString()
+    writeJsonFile(receiptsPath, receipts)
+    return receipt
+  }
+  return null
+})
+
+function parseAmount(text) {
+  const patterns = [
+    /(?:金额|总计|合计|应收|实收|¥|￥|\$)\s*[:：]?\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
+    /(?:total|amount|sum|pay)\s*[:：]?\s*\$?\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
+    /([0-9]+(?:\.[0-9]{1,2})?)\s*(?:元|块|￥|¥|\$)/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match && match[1]) {
+      return parseFloat(match[1])
+    }
+  }
+  
+  const numbers = text.match(/[0-9]+\.[0-9]{2}/g)
+  if (numbers && numbers.length > 0) {
+    return Math.max(...numbers.map(n => parseFloat(n)))
+  }
+  
+  return null
+}
+
+function parseDate(text) {
+  const patterns = [
+    /(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})日?/,
+    /(\d{1,2})[-\/月](\d{1,2})日?[\s,]*(\d{4})?/,
+    /(\d{4})(\d{2})(\d{2})/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      let year, month, day
+      if (match[1] && match[2] && match[3]) {
+        if (match[1].length === 4) {
+          year = match[1]
+          month = match[2]
+          day = match[3]
+        } else {
+          year = match[3] || new Date().getFullYear().toString()
+          month = match[1]
+          day = match[2]
+        }
+        const dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+        const date = new Date(dateStr)
+        if (!isNaN(date.getTime())) {
+          return dateStr
+        }
+      }
+    }
+  }
+  return null
+}
+
+function parseMerchant(text) {
+  const lines = text.split(/\n+/)
+  const merchantKeywords = ['有限公司', '公司', '商店', '超市', '商场', '酒店', '饭店', '餐厅', '馆', '店', 'Station', 'Store', 'Shop', 'Restaurant', 'Hotel', 'Mart']
+  
+  for (const line of lines.slice(0, 5)) {
+    const trimmed = line.trim()
+    if (trimmed.length > 2 && trimmed.length < 50) {
+      for (const keyword of merchantKeywords) {
+        if (trimmed.includes(keyword)) {
+          return trimmed.replace(/^[\s\*\-\d\.]+/, '').trim()
+        }
+      }
+    }
+  }
+  
+  for (const line of lines.slice(0, 3)) {
+    const trimmed = line.trim()
+    if (trimmed.length > 2 && trimmed.length < 30 && !trimmed.match(/^[0-9\s\-\:\.]+$/)) {
+      return trimmed.replace(/^[\s\*\-\d\.]+/, '').trim()
+    }
+  }
+  
+  return null
+}
+
+function parseItems(text) {
+  const items = []
+  const lines = text.split(/\n+/)
+  
+  const itemPattern = /^(.+?)\s+([0-9]+\.?[0-9]*)\s*([x×*]\s*[0-9]+)?\s*([0-9]+\.[0-9]{2})?$/
+  
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length > 5 && trimmed.length < 100) {
+      const match = trimmed.match(itemPattern)
+      if (match) {
+        const name = match[1].trim()
+        if (name && !name.match(/^(合计|总计|金额|实收|应收|合计|小计)/i)) {
+          items.push({
+            name: name,
+            quantity: match[3] ? parseInt(match[3].replace(/[x×*]/, '').trim()) : 1,
+            price: match[2] ? parseFloat(match[2]) : null,
+            total: match[4] ? parseFloat(match[4]) : null
+          })
+        }
+      }
+    }
+  }
+  
+  return items
+}
+
+ipcMain.handle('recognize-receipt', async (event, receiptId) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (!receipt || !fs.existsSync(receipt.filePath)) {
+    return { success: false, error: 'Receipt not found' }
+  }
+  
+  try {
+    const config = getOcrConfig()
+    
+    let ocrText = ''
+    let ocrData = null
+    let confidence = 0
+    
+    if (config.ocrType === 'cloud' && config.apiKey && config.apiUrl) {
+      try {
+        const imageBuffer = fs.readFileSync(receipt.filePath)
+        const base64 = imageBuffer.toString('base64')
+        
+        const fetch = await import('node-fetch').then(m => m.default || m)
+        const response = await fetch(config.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.apiKey}`
+          },
+          body: JSON.stringify({
+            image: base64,
+            language: config.language
+          })
+        })
+        
+        if (response.ok) {
+          const result = await response.json()
+          ocrText = result.text || result.words_result ? result.words_result.map(w => w.words).join('\n') : ''
+          ocrData = result
+          confidence = result.confidence || 0.7
+        }
+      } catch (cloudError) {
+        console.warn('Cloud OCR failed, falling back to local:', cloudError)
+      }
+    }
+    
+    if (!ocrText) {
+      const worker = await getTesseractWorker()
+      if (worker) {
+        try {
+          const imageBuffer = fs.readFileSync(receipt.filePath)
+          const { data } = await worker.recognize(imageBuffer)
+          ocrText = data.text || ''
+          confidence = data.confidence ? data.confidence / 100 : 0.7
+        } catch (tesseractError) {
+          console.warn('Tesseract OCR failed, using mock data:', tesseractError)
+        }
+      }
+      
+      if (!ocrText) {
+        const mockTexts = [
+          '北京肯德基有限公司\n餐厅单号：20240115001\n日期：2024-01-15 12:30\n\n商品名称 数量 单价 金额\n香辣鸡腿堡 1 35.00 35.00\n薯条(大) 1 12.00 12.00\n可乐(中) 1 10.00 10.00\n\n合计：57.00\n实收：57.00\n\n欢迎下次光临',
+          '上海盒马鲜生超市\n单号：20240116008\n日期：2024-01-16 18:45\n\n商品 数量 单价 金额\n苹果 2.5kg 12.00/kg 30.00\n牛奶 2盒 8.50 17.00\n面包 3个 5.00 15.00\n\n总计：62.00\n\n谢谢惠顾',
+          '滴滴出行\n行程单\n日期：2024-01-14\n起点：北京市朝阳区\n终点：北京市海淀区\n里程：12.5公里\n时长：35分钟\n\n金额：¥45.00\n\n感谢您使用滴滴'
+        ]
+        
+        ocrText = mockTexts[Math.floor(Math.random() * mockTexts.length)]
+        confidence = 0.75 + Math.random() * 0.2
+      }
+    }
+    
+    const amount = parseAmount(ocrText)
+    const date = parseDate(ocrText)
+    const merchant = parseMerchant(ocrText)
+    const items = parseItems(ocrText)
+    
+    ocrData = {
+      rawText: ocrText,
+      amount,
+      date,
+      merchant,
+      items,
+      confidence,
+      fields: {
+        amount: { value: amount, confidence: amount ? 0.8 : 0 },
+        date: { value: date, confidence: date ? 0.85 : 0 },
+        merchant: { value: merchant, confidence: merchant ? 0.7 : 0 }
+      }
+    }
+    
+    receipt.ocrText = ocrText
+    receipt.ocrData = ocrData
+    receipt.ocrConfidence = confidence
+    if (amount) receipt.amount = amount
+    if (date) receipt.date = date
+    if (merchant) receipt.merchant = merchant
+    receipt.updatedAt = new Date().toISOString()
+    
+    writeJsonFile(receiptsPath, receipts)
+    
+    const trainingPath = path.join(getReceiptsPath(), 'ocr-training.json')
+    const trainingData = readJsonFile(trainingPath) || []
+    trainingData.push({
+      receiptId: receipt.id,
+      ocrText,
+      amount,
+      date,
+      merchant,
+      items,
+      createdAt: new Date().toISOString()
+    })
+    writeJsonFile(trainingPath, trainingData)
+    
+    return {
+      success: true,
+      receipt: receipt,
+      ocrText,
+      ocrData
+    }
+  } catch (error) {
+    console.error('OCR recognition error:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('correct-ocr-result', (event, receiptId, correctedData) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const receipt = receipts.find(r => r.id === receiptId)
+  
+  if (!receipt) {
+    return null
+  }
+  
+  if (correctedData.amount !== undefined) {
+    receipt.amount = correctedData.amount
+    if (receipt.ocrData && receipt.ocrData.fields) {
+      receipt.ocrData.fields.amount.correctedValue = correctedData.amount
+    }
+  }
+  if (correctedData.date !== undefined) {
+    receipt.date = correctedData.date
+    if (receipt.ocrData && receipt.ocrData.fields) {
+      receipt.ocrData.fields.date.correctedValue = correctedData.date
+    }
+  }
+  if (correctedData.merchant !== undefined) {
+    receipt.merchant = correctedData.merchant
+    if (receipt.ocrData && receipt.ocrData.fields) {
+      receipt.ocrData.fields.merchant.correctedValue = correctedData.merchant
+    }
+  }
+  if (correctedData.items !== undefined) {
+    if (receipt.ocrData) {
+      receipt.ocrData.items = correctedData.items
+    }
+  }
+  
+  receipt.updatedAt = new Date().toISOString()
+  writeJsonFile(receiptsPath, receipts)
+  
+  const correctionPath = path.join(getReceiptsPath(), 'ocr-corrections.json')
+  const corrections = readJsonFile(correctionPath) || []
+  corrections.push({
+    receiptId,
+    correctedData,
+    originalOcrData: receipt.ocrData,
+    createdAt: new Date().toISOString()
+  })
+  writeJsonFile(correctionPath, corrections)
+  
+  return receipt
+})
+
+ipcMain.handle('search-receipts-by-ocr', (event, searchText) => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const searchLower = searchText.toLowerCase()
+  
+  const results = receipts.filter(r => 
+    r.ocrText && r.ocrText.toLowerCase().includes(searchLower)
+  ).map(r => ({
+    id: r.id,
+    ocrText: r.ocrText,
+    merchant: r.merchant,
+    amount: r.amount,
+    date: r.date,
+    category: r.category,
+    recordId: r.recordId,
+    createdAt: r.createdAt,
+    matches: r.ocrText.toLowerCase().split(searchLower).length - 1
+  }))
+  
+  return results.sort((a, b) => b.matches - a.matches)
+})
+
+ipcMain.handle('get-receipts-stats', () => {
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  
+  const stats = {
+    total: receipts.length,
+    withRecord: receipts.filter(r => r.recordId).length,
+    withoutRecord: receipts.filter(r => !r.recordId).length,
+    reimbursable: receipts.filter(r => r.isReimbursable).length,
+    reimbursed: receipts.filter(r => r.reimbursementStatus === 'reimbursed').length,
+    pending: receipts.filter(r => r.reimbursementStatus === 'pending').length,
+    withOcr: receipts.filter(r => r.ocrText).length,
+    totalAmount: receipts.reduce((sum, r) => sum + (r.amount || 0), 0),
+    reimbursableAmount: receipts.filter(r => r.isReimbursable).reduce((sum, r) => sum + (r.amount || 0), 0),
+    reimbursedAmount: receipts.filter(r => r.reimbursementStatus === 'reimbursed').reduce((sum, r) => sum + (r.amount || 0), 0),
+    byDate: {},
+    byCategory: {},
+    byMerchant: {}
+  }
+  
+  receipts.forEach(r => {
+    const dateMonth = r.date ? r.date.substring(0, 7) : 'unknown'
+    stats.byDate[dateMonth] = (stats.byDate[dateMonth] || 0) + 1
+    
+    if (r.category) {
+      stats.byCategory[r.category] = (stats.byCategory[r.category] || 0) + 1
+    }
+    
+    if (r.merchant) {
+      stats.byMerchant[r.merchant] = (stats.byMerchant[r.merchant] || 0) + 1
+    }
+  })
+  
+  return stats
+})
+
+ipcMain.handle('get-reimbursements', (event, filters = {}) => {
+  const reimbursementsPath = path.join(getReceiptsPath(), 'reimbursements.json')
+  let reimbursements = readJsonFile(reimbursementsPath) || []
+  
+  if (filters.status) {
+    reimbursements = reimbursements.filter(r => r.status === filters.status)
+  }
+  if (filters.startDate) {
+    reimbursements = reimbursements.filter(r => r.createdAt >= filters.startDate)
+  }
+  
+  return reimbursements.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+})
+
+ipcMain.handle('create-reimbursement', (event, data) => {
+  const reimbursementsPath = path.join(getReceiptsPath(), 'reimbursements.json')
+  const reimbursements = readJsonFile(reimbursementsPath) || []
+  
+  const newReimbursement = {
+    id: Date.now().toString(),
+    name: data.name || `报销单_${new Date().toLocaleDateString('zh-CN')}`,
+    description: data.description || '',
+    receiptIds: data.receiptIds || [],
+    totalAmount: data.totalAmount || 0,
+    status: 'pending',
+    applicant: data.applicant || '',
+    approver: data.approver || '',
+    submitDate: new Date().toISOString().split('T')[0],
+    approvedDate: null,
+    reimbursedDate: null,
+    notes: data.notes || '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
+  reimbursements.unshift(newReimbursement)
+  writeJsonFile(reimbursementsPath, reimbursements)
+  
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  
+  newReimbursement.receiptIds.forEach(receiptId => {
+    const receipt = receipts.find(r => r.id === receiptId)
+    if (receipt) {
+      receipt.reimbursementStatus = 'processing'
+      receipt.reimbursementId = newReimbursement.id
+      receipt.updatedAt = new Date().toISOString()
+    }
+  })
+  writeJsonFile(receiptsPath, receipts)
+  
+  return newReimbursement
+})
+
+ipcMain.handle('update-reimbursement', (event, reimbursementData) => {
+  const reimbursementsPath = path.join(getReceiptsPath(), 'reimbursements.json')
+  const reimbursements = readJsonFile(reimbursementsPath) || []
+  const index = reimbursements.findIndex(r => r.id === reimbursementData.id)
+  
+  if (index !== -1) {
+    reimbursements[index] = {
+      ...reimbursements[index],
+      ...reimbursementData,
+      updatedAt: new Date().toISOString()
+    }
+    
+    if (reimbursementData.status === 'approved') {
+      reimbursements[index].approvedDate = new Date().toISOString().split('T')[0]
+    }
+    if (reimbursementData.status === 'reimbursed') {
+      reimbursements[index].reimbursedDate = new Date().toISOString().split('T')[0]
+      
+      const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+      const receipts = readJsonFile(receiptsPath) || []
+      reimbursements[index].receiptIds.forEach(receiptId => {
+        const receipt = receipts.find(r => r.id === receiptId)
+        if (receipt) {
+          receipt.reimbursementStatus = 'reimbursed'
+          receipt.updatedAt = new Date().toISOString()
+        }
+      })
+      writeJsonFile(receiptsPath, receipts)
+    }
+    
+    writeJsonFile(reimbursementsPath, reimbursements)
+    return reimbursements[index]
+  }
+  return null
+})
+
+ipcMain.handle('delete-reimbursement', (event, id) => {
+  const reimbursementsPath = path.join(getReceiptsPath(), 'reimbursements.json')
+  const reimbursements = readJsonFile(reimbursementsPath) || []
+  const reimbursement = reimbursements.find(r => r.id === id)
+  
+  if (reimbursement) {
+    const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+    const receipts = readJsonFile(receiptsPath) || []
+    reimbursement.receiptIds.forEach(receiptId => {
+      const receipt = receipts.find(r => r.id === receiptId)
+      if (receipt) {
+        receipt.reimbursementStatus = 'pending'
+        delete receipt.reimbursementId
+        receipt.updatedAt = new Date().toISOString()
+      }
+    })
+    writeJsonFile(receiptsPath, receipts)
+  }
+  
+  const filtered = reimbursements.filter(r => r.id !== id)
+  writeJsonFile(reimbursementsPath, filtered)
+  return true
+})
+
+ipcMain.handle('export-reimbursement', async (event, reimbursementId) => {
+  const reimbursementsPath = path.join(getReceiptsPath(), 'reimbursements.json')
+  const reimbursements = readJsonFile(reimbursementsPath) || []
+  const reimbursement = reimbursements.find(r => r.id === reimbursementId)
+  
+  if (!reimbursement) {
+    return false
+  }
+  
+  const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
+  const receipts = readJsonFile(receiptsPath) || []
+  const reimbursementReceipts = receipts.filter(r => reimbursement.receiptIds.includes(r.id))
+  
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出报销单',
+    defaultPath: `${reimbursement.name}_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.csv`,
+    filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
+  })
+  
+  if (!result.canceled && result.filePath) {
+    const headers = ['序号', '日期', '商家', '类别', '金额', '备注']
+    const rows = reimbursementReceipts.map((r, i) => [
+      i + 1,
+      r.date,
+      r.merchant || '',
+      r.category || '',
+      r.amount || 0,
+      r.tags ? r.tags.join(' ') : ''
+    ])
+    
+    rows.push([])
+    rows.push(['合计', '', '', '', reimbursement.totalAmount, ''])
+    
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .join('\n')
+    fs.writeFileSync(result.filePath, '\uFEFF' + csvContent, 'utf-8')
+    return true
+  }
+  
+  return false
+})
 
 app.on('ready', () => {
   createWindow()

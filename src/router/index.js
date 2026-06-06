@@ -45,6 +45,18 @@ const routes = [
         name: 'Recurring',
         component: () => import('@/views/Recurring.vue'),
         meta: { title: '周期账单', icon: 'el-icon-date' }
+      },
+      {
+        path: 'receipts',
+        name: 'Receipts',
+        component: () => import('@/views/Receipts.vue'),
+        meta: { title: '票据管理', icon: 'el-icon-picture-outline' }
+      },
+      {
+        path: 'reimbursement',
+        name: 'Reimbursement',
+        component: () => import('@/views/Reimbursement.vue'),
+        meta: { title: '报销管理', icon: 'el-icon-tickets' }
       }
     ]
   }
