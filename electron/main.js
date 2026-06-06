@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const XLSX = require('xlsx')
 
 let Tesseract = null
 try {
@@ -1398,7 +1399,7 @@ ipcMain.handle('save-receipt-image', async (event, imageData) => {
       amount: imageData.amount || null,
       date: imageData.date || new Date().toISOString().split('T')[0],
       tags: imageData.tags || [],
-      isReimbursable: imageData.isReimbursable || false,
+      isReimbursable: imageData.isReimbursable !== undefined ? imageData.isReimbursable : true,
       reimbursementStatus: 'pending',
       ocrText: '',
       ocrData: null,
@@ -1422,6 +1423,21 @@ ipcMain.handle('save-receipt-image', async (event, imageData) => {
 ipcMain.handle('get-receipts', (event, filters = {}) => {
   const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
   let receipts = readJsonFile(receiptsPath) || []
+  
+  let needsSave = false
+  receipts.forEach(receipt => {
+    if (receipt.isReimbursable === undefined || receipt.isReimbursable === null) {
+      receipt.isReimbursable = true
+      needsSave = true
+    }
+    if (receipt.reimbursementStatus === undefined || receipt.reimbursementStatus === null) {
+      receipt.reimbursementStatus = receipt.reimbursementId ? 'processing' : 'pending'
+      needsSave = true
+    }
+  })
+  if (needsSave) {
+    writeJsonFile(receiptsPath, receipts)
+  }
   
   if (filters.recordId) {
     receipts = receipts.filter(r => r.recordId === filters.recordId)
@@ -1459,7 +1475,23 @@ ipcMain.handle('get-receipts', (event, filters = {}) => {
 
 ipcMain.handle('get-receipt', (event, id) => {
   const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
-  const receipts = readJsonFile(receiptsPath) || []
+  let receipts = readJsonFile(receiptsPath) || []
+  
+  let needsSave = false
+  receipts.forEach(receipt => {
+    if (receipt.isReimbursable === undefined || receipt.isReimbursable === null) {
+      receipt.isReimbursable = true
+      needsSave = true
+    }
+    if (receipt.reimbursementStatus === undefined || receipt.reimbursementStatus === null) {
+      receipt.reimbursementStatus = receipt.reimbursementId ? 'processing' : 'pending'
+      needsSave = true
+    }
+  })
+  if (needsSave) {
+    writeJsonFile(receiptsPath, receipts)
+  }
+  
   return receipts.find(r => r.id === id) || null
 })
 
@@ -1882,7 +1914,22 @@ ipcMain.handle('search-receipts-by-ocr', (event, searchText) => {
 
 ipcMain.handle('get-receipts-stats', () => {
   const receiptsPath = path.join(getReceiptsPath(), 'receipts.json')
-  const receipts = readJsonFile(receiptsPath) || []
+  let receipts = readJsonFile(receiptsPath) || []
+  
+  let needsSave = false
+  receipts.forEach(receipt => {
+    if (receipt.isReimbursable === undefined || receipt.isReimbursable === null) {
+      receipt.isReimbursable = true
+      needsSave = true
+    }
+    if (receipt.reimbursementStatus === undefined || receipt.reimbursementStatus === null) {
+      receipt.reimbursementStatus = receipt.reimbursementId ? 'processing' : 'pending'
+      needsSave = true
+    }
+  })
+  if (needsSave) {
+    writeJsonFile(receiptsPath, receipts)
+  }
   
   const stats = {
     total: receipts.length,
@@ -2071,6 +2118,535 @@ ipcMain.handle('export-reimbursement', async (event, reimbursementId) => {
   }
   
   return false
+})
+
+const FIELD_MAPPINGS = {
+  date: ['日期', '交易时间', '交易日期', '时间', 'date', 'time', 'datetime', 'transaction_date', '交易创建时间'],
+  amount: ['金额', '交易金额', '收支金额', '金额(元)', 'amount', 'money', 'price', 'transaction_amount'],
+  type: ['类型', '收支类型', '交易类型', '收支', 'type', '收支方向', '收/支'],
+  category: ['分类', '交易分类', '类别', 'category', '分类名称', '消费类型'],
+  remark: ['备注', '说明', '描述', '交易备注', 'remark', 'note', 'description', '商品说明'],
+  accountName: ['账户', '支付方式', '来源', '账户名称', 'account', 'payment', '支付渠道', '交易渠道'],
+  merchant: ['商家', '商户名称', '交易对方', '对方账户', 'merchant', '交易对方账号', '交易对方名称']
+}
+
+const SOFTWARE_PATTERNS = {
+  '随手记': ['交易时间', '分类', '金额', '备注'],
+  '挖财': ['日期', '一级分类', '金额', '备注'],
+  '鲨鱼记账': ['日期', '分类', '金额', '备注'],
+  '支付宝': ['交易创建时间', '收/支', '交易分类', '金额', '交易对方', '商品说明'],
+  '微信': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)'],
+  '微信支付账单': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)']
+}
+
+const TYPE_MAPPINGS = {
+  '支出': 'expense', '支出': 'expense', '消费': 'expense', 'expense': 'expense',
+  '收入': 'income', '收入': 'income', 'income': 'income',
+  '转账': 'transfer', '转账': 'transfer', 'transfer': 'transfer'
+}
+
+function getImportPath() {
+  const dataDir = getDataPath()
+  const importDir = path.join(dataDir, 'import')
+  if (!fs.existsSync(importDir)) {
+    fs.mkdirSync(importDir, { recursive: true })
+  }
+  return importDir
+}
+
+function getImportTemplatesPath() {
+  return path.join(getImportPath(), 'templates.json')
+}
+
+function getImportHistoryPath() {
+  return path.join(getImportPath(), 'history.json')
+}
+
+function getRollbackPath() {
+  return path.join(getImportPath(), 'rollback.json')
+}
+
+function parseCsv(content) {
+  const lines = content.split(/\r?\n/)
+  if (lines.length === 0) return []
+  
+  let separator = ','
+  const firstLine = lines[0]
+  if (firstLine.includes('\t')) separator = '\t'
+  else if (firstLine.includes(';')) separator = ';'
+  
+  const headers = parseCsvLine(lines[0], separator)
+  const rows = []
+  
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim() === '') continue
+    const values = parseCsvLine(lines[i], separator)
+    if (values.length === headers.length) {
+      const row = {}
+      headers.forEach((header, index) => {
+        row[header.trim()] = values[index]?.trim() || ''
+      })
+      rows.push(row)
+    }
+  }
+  
+  return rows
+}
+
+function parseCsvLine(line, separator) {
+  const result = []
+  let current = ''
+  let inQuotes = false
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"'
+        i++
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (char === separator && !inQuotes) {
+      result.push(current)
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  result.push(current)
+  return result
+}
+
+function parseExcel(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const sheetName = workbook.SheetNames[0]
+  const worksheet = workbook.Sheets[sheetName]
+  return XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+}
+
+function detectSoftware(headers) {
+  const headerSet = new Set(headers.map(h => h.toLowerCase().trim()))
+  
+  for (const [software, patterns] of Object.entries(SOFTWARE_PATTERNS)) {
+    const matchCount = patterns.filter(p => headerSet.has(p.toLowerCase())).length
+    if (matchCount >= 2) {
+      return software
+    }
+  }
+  return null
+}
+
+function autoMapFields(headers) {
+  const mapping = {}
+  const headerLowerMap = {}
+  
+  headers.forEach(header => {
+    headerLowerMap[header.toLowerCase().trim()] = header
+  })
+  
+  for (const [field, possibleNames] of Object.entries(FIELD_MAPPINGS)) {
+    for (const name of possibleNames) {
+      const lowerName = name.toLowerCase()
+      if (headerLowerMap[lowerName]) {
+        mapping[field] = headerLowerMap[lowerName]
+        break
+      }
+    }
+  }
+  
+  return mapping
+}
+
+function normalizeDate(dateStr) {
+  if (!dateStr) return ''
+  
+  const patterns = [
+    /(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})/,
+    /(\d{4})-(\d{2})-(\d{2})/,
+    /(\d{4})\/(\d{2})\/(\d{2})/,
+    /(\d{4})年(\d{2})月(\d{2})日/,
+    /(\d{4})(\d{2})(\d{2})/,
+    /(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = dateStr.match(pattern)
+    if (match) {
+      let year, month, day
+      if (match[1].length === 4) {
+        year = match[1]
+        month = match[2]
+        day = match[3]
+      } else if (match[3].length === 4) {
+        year = match[3]
+        month = match[1]
+        day = match[2]
+      } else {
+        continue
+      }
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
+  }
+  
+  const date = new Date(dateStr)
+  if (!isNaN(date.getTime())) {
+    return date.toISOString().split('T')[0]
+  }
+  
+  return ''
+}
+
+function normalizeAmount(amountStr) {
+  if (amountStr === null || amountStr === undefined || amountStr === '') return 0
+  
+  let cleaned = String(amountStr).replace(/[￥¥$,\s]/g, '').trim()
+  
+  if (cleaned === '') return 0
+  
+  const amount = parseFloat(cleaned)
+  return isNaN(amount) ? 0 : Math.abs(amount)
+}
+
+function normalizeType(typeStr) {
+  if (!typeStr) return 'expense'
+  
+  const lowerType = String(typeStr).toLowerCase().trim()
+  
+  if (TYPE_MAPPINGS[lowerType]) {
+    return TYPE_MAPPINGS[lowerType]
+  }
+  
+  return 'expense'
+}
+
+function validateRecord(record, index) {
+  const errors = []
+  const warnings = []
+  
+  if (!record.date) {
+    errors.push(`第 ${index + 1} 行: 日期为空`)
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date)) {
+    errors.push(`第 ${index + 1} 行: 日期格式错误`)
+  }
+  
+  if (record.amount === undefined || record.amount === null || isNaN(record.amount)) {
+    errors.push(`第 ${index + 1} 行: 金额格式错误`)
+  } else if (record.amount <= 0) {
+    warnings.push(`第 ${index + 1} 行: 金额为0或负数`)
+  }
+  
+  if (!record.type) {
+    warnings.push(`第 ${index + 1} 行: 类型为空，默认设为支出`)
+  }
+  
+  return { errors, warnings }
+}
+
+function generateRecordKey(record) {
+  const date = record.date || ''
+  const amount = record.amount ? Number(record.amount).toFixed(2) : '0.00'
+  const category = record.categoryName || record.category || ''
+  const remark = record.remark || ''
+  return `${date}|${amount}|${category}|${remark}`
+}
+
+function checkDuplicates(records, existingRecords) {
+  const existingKeys = new Set(existingRecords.map(generateRecordKey))
+  
+  return records.map((record, index) => {
+    const key = generateRecordKey(record)
+    return {
+      index,
+      record,
+      isDuplicate: existingKeys.has(key),
+      key
+    }
+  })
+}
+
+let importCancelFlag = {}
+
+ipcMain.handle('parse-import-file', async (event, filePath) => {
+  try {
+    const ext = path.extname(filePath).toLowerCase()
+    let content = fs.readFileSync(filePath)
+    let rows = []
+    
+    if (ext === '.csv') {
+      let text = content.toString('utf-8')
+      if (text.charCodeAt(0) === 0xFEFF) {
+        text = text.slice(1)
+      }
+      rows = parseCsv(text)
+    } else if (ext === '.xlsx' || ext === '.xls') {
+      rows = parseExcel(content)
+    } else {
+      return { success: false, error: '不支持的文件格式' }
+    }
+    
+    if (rows.length === 0) {
+      return { success: false, error: '文件为空或格式错误' }
+    }
+    
+    const headers = Object.keys(rows[0])
+    const software = detectSoftware(headers)
+    const autoMapping = autoMapFields(headers)
+    
+    return {
+      success: true,
+      data: {
+        headers,
+        rows,
+        totalRows: rows.length,
+        software,
+        autoMapping
+      }
+    }
+  } catch (error) {
+    console.error('Parse import file error:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('get-import-templates', () => {
+  const filePath = getImportTemplatesPath()
+  return readJsonFile(filePath) || []
+})
+
+ipcMain.handle('save-import-template', (event, template) => {
+  const filePath = getImportTemplatesPath()
+  const templates = readJsonFile(filePath) || []
+  
+  const newTemplate = {
+    ...template,
+    id: Date.now().toString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
+  templates.push(newTemplate)
+  writeJsonFile(filePath, templates)
+  
+  return newTemplate
+})
+
+ipcMain.handle('delete-import-template', (event, id) => {
+  const filePath = getImportTemplatesPath()
+  const templates = readJsonFile(filePath) || []
+  const filtered = templates.filter(t => t.id !== id)
+  writeJsonFile(filePath, filtered)
+  return true
+})
+
+ipcMain.handle('preview-import-data', (event, { rows, fieldMapping, categories, accounts, defaultAccountId, defaultAccountName }) => {
+  const records = []
+  const errors = []
+  const warnings = []
+  
+  rows.forEach((row, index) => {
+    const record = {
+      date: normalizeDate(row[fieldMapping.date]),
+      amount: normalizeAmount(row[fieldMapping.amount]),
+      type: normalizeType(row[fieldMapping.type]),
+      categoryName: row[fieldMapping.category] || '',
+      remark: row[fieldMapping.remark] || '',
+      accountName: row[fieldMapping.accountName] || defaultAccountName || '',
+      merchant: row[fieldMapping.merchant] || ''
+    }
+    
+    if (!record.accountName && defaultAccountId) {
+      record.accountId = defaultAccountId
+    }
+    
+    const matchedCategory = categories.find(c => 
+      c.name === record.categoryName)
+    if (matchedCategory) {
+      record.categoryId = matchedCategory.id
+      record.type = matchedCategory.type
+    } else if (record.categoryName) {
+      const lowerCat = categories.find(c => 
+        c.name.toLowerCase() === record.categoryName.toLowerCase())
+      if (lowerCat) {
+        record.categoryId = lowerCat.id
+        record.type = lowerCat.type
+        record.categoryName = lowerCat.name
+      }
+    }
+    
+    if (!record.categoryId && record.categoryName) {
+      warnings.push(`第 ${index + 1} 行: 分类「${record.categoryName}」未找到匹配`)
+    }
+    
+    const validation = validateRecord(record, index)
+    errors.push(...validation.errors)
+    warnings.push(...validation.warnings)
+    
+    records.push(record)
+  })
+  
+  return {
+    records,
+    errors,
+    warnings
+  }
+})
+
+ipcMain.handle('check-import-duplicates', (event, records) => {
+  const existingRecordsPath = path.join(getDataPath(), 'records.json')
+  const existingRecords = readJsonFile(existingRecordsPath) || []
+  
+  return checkDuplicates(records, existingRecords)
+})
+
+ipcMain.handle('start-import', async (event, { records, importId, categories }) => {
+  const importTaskId = Date.now().toString()
+  importCancelFlag[importTaskId] = false
+  
+  try {
+    const existingRecordsPath = path.join(getDataPath(), 'records.json')
+    const existingRecords = readJsonFile(existingRecordsPath) || []
+    const recordsBeforeImport = JSON.parse(JSON.stringify(existingRecords))
+    
+    const importedRecordIds = []
+    const totalRecords = records.length
+    let processedCount = 0
+    
+    for (let i = 0; i < records.length; i++) {
+      if (importCancelFlag[importTaskId]) {
+        break
+      }
+      
+      const record = records[i]
+      
+      const newRecord = {
+        ...record,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        createdAt: new Date().toISOString(),
+        importId: importId || importTaskId
+      }
+      
+      if (!newRecord.categoryId) {
+        newRecord.categoryId = newRecord.type === 'income' ? 'i4' : 'c8'
+        const defaultCat = categories.find(c => c.id === newRecord.categoryId)
+        if (defaultCat) {
+          newRecord.categoryName = defaultCat.name
+        }
+      }
+      
+      existingRecords.unshift(newRecord)
+      importedRecordIds.push(newRecord.id)
+      
+      processedCount++
+      
+      if (i % 10 === 0 || i === records.length - 1) {
+        event.sender.send('import-progress', {
+          importTaskId,
+          progress: Math.round((processedCount / totalRecords) * 100),
+          processed: processedCount,
+          total: totalRecords
+        })
+      }
+    }
+    
+    if (importCancelFlag[importTaskId]) {
+      delete importCancelFlag[importTaskId]
+      return { success: false, canceled: true, importedCount: 0 }
+    }
+    
+    writeJsonFile(existingRecordsPath, existingRecords)
+    
+    const rollbackData = {
+      importTaskId,
+      importId,
+      recordsBeforeImport,
+      importedRecordIds,
+      importedCount: importedRecordIds.length,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    }
+    
+    const rollbackPath = getRollbackPath()
+    const rollbackList = readJsonFile(rollbackPath) || []
+    rollbackList.unshift(rollbackData)
+    writeJsonFile(rollbackPath, rollbackList)
+    
+    const historyPath = getImportHistoryPath()
+    const history = readJsonFile(historyPath) || []
+    history.unshift({
+      id: importTaskId,
+      importId,
+      count: importedRecordIds.length,
+      createdAt: new Date().toISOString()
+    })
+    writeJsonFile(historyPath, history)
+    
+    recalculateAllAccountBalances()
+    
+    delete importCancelFlag[importTaskId]
+    
+    return {
+      success: true,
+      importTaskId,
+      importedCount: importedRecordIds.length,
+      canRollback: true,
+      rollbackExpiresAt: rollbackData.expiresAt
+    }
+  } catch (error) {
+    console.error('Import error:', error)
+    delete importCancelFlag[importTaskId]
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('cancel-import', (event, importTaskId) => {
+  if (importCancelFlag[importTaskId]) {
+    importCancelFlag[importTaskId] = true
+    return true
+  }
+  return false
+})
+
+ipcMain.handle('get-rollback-history', () => {
+  const rollbackPath = getRollbackPath()
+  const rollbackList = readJsonFile(rollbackPath) || []
+  const now = new Date()
+  
+  return rollbackList.map(item => ({
+    ...item,
+    canRollback: new Date(item.expiresAt) > now,
+    remainingSeconds: Math.max(0, Math.floor((new Date(item.expiresAt) - now) / 1000))
+  }))
+})
+
+ipcMain.handle('rollback-import', (event, importTaskId) => {
+  const rollbackPath = getRollbackPath()
+  const rollbackList = readJsonFile(rollbackPath) || []
+  const rollbackData = rollbackList.find(r => r.importTaskId === importTaskId)
+  
+  if (!rollbackData) {
+    return { success: false, error: '未找到回滚数据' }
+  }
+  
+  if (new Date(rollbackData.expiresAt) < new Date()) {
+    return { success: false, error: '回滚已过期' }
+  }
+  
+  try {
+    const recordsPath = path.join(getDataPath(), 'records.json')
+    writeJsonFile(recordsPath, rollbackData.recordsBeforeImport)
+    
+    const newRollbackList = rollbackList.filter(r => r.importTaskId !== importTaskId)
+    writeJsonFile(rollbackPath, newRollbackList)
+    
+    recalculateAllAccountBalances()
+    
+    return { success: true, rollbackCount: rollbackData.importedCount }
+  } catch (error) {
+    console.error('Rollback error:', error)
+    return { success: false, error: error.message }
+  }
 })
 
 app.on('ready', () => {

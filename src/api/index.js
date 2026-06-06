@@ -87,3 +87,16 @@ export const reimbursementApi = {
   delete: (id) => callIpc('delete-reimbursement', id),
   export: (reimbursementId) => callIpc('export-reimbursement', reimbursementId)
 }
+
+export const importApi = {
+  parseFile: (filePath) => callIpc('parse-import-file', filePath),
+  getTemplates: () => callIpc('get-import-templates'),
+  saveTemplate: (template) => callIpc('save-import-template', template),
+  deleteTemplate: (id) => callIpc('delete-import-template', id),
+  previewData: (data) => callIpc('preview-import-data', data),
+  checkDuplicates: (records) => callIpc('check-import-duplicates', records),
+  startImport: (data) => callIpc('start-import', data),
+  cancelImport: (importTaskId) => callIpc('cancel-import', importTaskId),
+  getRollbackHistory: () => callIpc('get-rollback-history'),
+  rollbackImport: (importTaskId) => callIpc('rollback-import', importTaskId)
+}

@@ -57,6 +57,12 @@ const routes = [
         name: 'Reimbursement',
         component: () => import('@/views/Reimbursement.vue'),
         meta: { title: '报销管理', icon: 'el-icon-tickets' }
+      },
+      {
+        path: 'import',
+        name: 'DataImport',
+        component: () => import('@/views/DataImport.vue'),
+        meta: { title: '数据导入', icon: 'el-icon-upload2' }
       }
     ]
   }

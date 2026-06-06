@@ -284,7 +284,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template slot-scope="scope">
             <el-button
               type="text"
@@ -303,6 +303,15 @@
               v-if="!scope.row.ocrText"
             >
               识别
+            </el-button>
+            <el-button
+              type="text"
+              size="mini"
+              :icon="scope.row.isReimbursable ? 'el-icon-check' : 'el-icon-close'"
+              @click="toggleReimbursable(scope.row)"
+              :type="scope.row.isReimbursable ? 'success' : 'warning'"
+            >
+              {{ scope.row.isReimbursable ? '可报销' : '不可报销' }}
             </el-button>
             <el-button
               type="text"
@@ -541,6 +550,25 @@ export default {
         this.$message.error('识别失败')
       } finally {
         this.recognizing = { ...this.recognizing, [receipt.id]: false }
+      }
+    },
+
+    async toggleReimbursable(receipt) {
+      try {
+        const newValue = !receipt.isReimbursable
+        const result = await receiptApi.updateReceipt({
+          id: receipt.id,
+          isReimbursable: newValue
+        })
+        if (result) {
+          this.$message.success(newValue ? '已标记为可报销' : '已取消可报销标记')
+          this.loadData()
+        } else {
+          this.$message.error('操作失败')
+        }
+      } catch (error) {
+        console.error('Toggle reimbursable error:', error)
+        this.$message.error('操作失败')
       }
     },
 
