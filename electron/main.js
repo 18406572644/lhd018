@@ -2121,13 +2121,14 @@ ipcMain.handle('export-reimbursement', async (event, reimbursementId) => {
 })
 
 const FIELD_MAPPINGS = {
-  date: ['日期', '交易时间', '交易日期', '时间', 'date', 'time', 'datetime', 'transaction_date', '交易创建时间'],
-  amount: ['金额', '交易金额', '收支金额', '金额(元)', 'amount', 'money', 'price', 'transaction_amount'],
-  type: ['类型', '收支类型', '交易类型', '收支', 'type', '收支方向', '收/支'],
-  category: ['分类', '交易分类', '类别', 'category', '分类名称', '消费类型'],
-  remark: ['备注', '说明', '描述', '交易备注', 'remark', 'note', 'description', '商品说明'],
-  accountName: ['账户', '支付方式', '来源', '账户名称', 'account', 'payment', '支付渠道', '交易渠道'],
-  merchant: ['商家', '商户名称', '交易对方', '对方账户', 'merchant', '交易对方账号', '交易对方名称']
+  date: ['日期', '交易时间', '交易日期', '时间', 'date', 'time', 'datetime', 'transaction_date', '交易创建时间', '下单时间', '付款时间'],
+  amount: ['金额', '交易金额', '收支金额', '金额(元)', 'amount', 'money', 'price', 'transaction_amount', '金额（元）', '订单金额', '实付金额'],
+  type: ['类型', '收支类型', '交易类型', '收支', 'type', '收支方向', '收/支', '收 / 支', '收支标志'],
+  category: ['分类', '交易分类', '类别', 'category', '分类名称', '消费类型', '商品类型', '交易大类'],
+  remark: ['备注', '说明', '描述', '交易备注', 'remark', 'note', 'description', '商品说明', '商品', '商品名称', '备注信息'],
+  accountName: ['账户', '支付方式', '来源', '账户名称', 'account', 'payment', '支付渠道', '交易渠道', '付款方式', '支付方式'],
+  merchant: ['商家', '商户名称', '交易对方', '对方账户', 'merchant', '交易对方账号', '交易对方名称', '商户全称', '对方'],
+  status: ['当前状态', '交易状态', '状态', '支付状态']
 }
 
 const SOFTWARE_PATTERNS = {
@@ -2135,14 +2136,18 @@ const SOFTWARE_PATTERNS = {
   '挖财': ['日期', '一级分类', '金额', '备注'],
   '鲨鱼记账': ['日期', '分类', '金额', '备注'],
   '支付宝': ['交易创建时间', '收/支', '交易分类', '金额', '交易对方', '商品说明'],
-  '微信': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)'],
-  '微信支付账单': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)']
+  '微信': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)', '当前状态'],
+  '微信支付账单': ['交易时间', '交易类型', '交易对方', '商品', '收/支', '金额(元)', '支付方式'],
+  '微信零钱明细': ['交易时间', '交易类型', '交易对方', '收/支', '金额(元)']
 }
 
 const TYPE_MAPPINGS = {
   '支出': 'expense', '支出': 'expense', '消费': 'expense', 'expense': 'expense',
+  '支出': 'expense', '付款': 'expense', '支付': 'expense', '已支出': 'expense',
   '收入': 'income', '收入': 'income', 'income': 'income',
-  '转账': 'transfer', '转账': 'transfer', 'transfer': 'transfer'
+  '收入': 'income', '收款': 'income', '已收入': 'income', '退款': 'income',
+  '转账': 'transfer', '转账': 'transfer', 'transfer': 'transfer',
+  '充值': 'transfer', '提现': 'transfer', '零钱提现': 'transfer'
 }
 
 function getImportPath() {
@@ -2220,27 +2225,153 @@ function parseCsvLine(line, separator) {
 }
 
 function parseExcel(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, cellNF: false, cellHTML: false })
   const sheetName = workbook.SheetNames[0]
   const worksheet = workbook.Sheets[sheetName]
-  return XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+  
+  const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+    defval: '', 
+    raw: false,
+    header: 1 
+  })
+  
+  const { headers, rows, headerRowIndex } = findHeaderAndDataRows(jsonData)
+  
+  if (!headers || headers.length === 0) {
+    return []
+  }
+  
+  const result = rows.map(row => {
+    const obj = {}
+    headers.forEach((header, index) => {
+      let value = row[index]
+      if (value === null || value === undefined) {
+        value = ''
+      }
+      obj[String(header).trim()] = String(value).trim()
+    })
+    return obj
+  })
+  
+  return result.filter(row => {
+    const values = Object.values(row).map(v => String(v).trim())
+    const nonEmptyCount = values.filter(v => v !== '').length
+    return nonEmptyCount >= 2
+  })
+}
+
+function findHeaderAndDataRows(jsonData) {
+  if (!jsonData || jsonData.length === 0) {
+    return { headers: null, rows: [], headerRowIndex: -1 }
+  }
+  
+  const headerKeywords = ['交易时间', '交易日期', '日期', '金额', '收支', '收/支', '交易类型', '交易对方', '商品', '分类', '备注']
+  
+  let headerRowIndex = -1
+  let bestMatchCount = 0
+  
+  for (let i = 0; i < Math.min(jsonData.length, 30); i++) {
+    const row = jsonData[i]
+    if (!row || row.length === 0) continue
+    
+    const matchCount = row.filter(cell => {
+      const cellStr = String(cell || '').trim().toLowerCase()
+      return headerKeywords.some(kw => cellStr.includes(kw.toLowerCase()))
+    }).length
+    
+    if (matchCount > bestMatchCount && matchCount >= 2) {
+      bestMatchCount = matchCount
+      headerRowIndex = i
+    }
+  }
+  
+  if (headerRowIndex === -1) {
+    headerRowIndex = 0
+  }
+  
+  const headers = jsonData[headerRowIndex].map(h => {
+    if (h === null || h === undefined) return ''
+    return String(h).trim()
+  }).filter(h => h !== '')
+  
+  const headerLength = jsonData[headerRowIndex].length
+  
+  const dataRows = []
+  for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
+    const row = jsonData[i]
+    if (!row) continue
+    
+    const paddedRow = []
+    for (let j = 0; j < headerLength; j++) {
+      paddedRow.push(row[j] !== undefined ? row[j] : '')
+    }
+    
+    const rowStr = JSON.stringify(row).toLowerCase()
+    if (rowStr.includes('合计') || rowStr.includes('总计') || rowStr.includes('收入') && rowStr.includes('支出') && row.length < 3) {
+      continue
+    }
+    
+    const nonEmptyCount = row.filter(cell => cell !== null && cell !== undefined && String(cell).trim() !== '').length
+    if (nonEmptyCount >= 2) {
+      dataRows.push(paddedRow)
+    }
+  }
+  
+  return { headers, rows: dataRows, headerRowIndex }
 }
 
 function detectSoftware(headers) {
   const headerSet = new Set(headers.map(h => h.toLowerCase().trim()))
   
   for (const [software, patterns] of Object.entries(SOFTWARE_PATTERNS)) {
-    const matchCount = patterns.filter(p => headerSet.has(p.toLowerCase())).length
+    const matchCount = patterns.filter(p => {
+      const pLower = p.toLowerCase()
+      return headerSet.has(pLower) || 
+        Array.from(headerSet).some(h => h.includes(pLower))
+    }).length
     if (matchCount >= 2) {
       return software
     }
   }
+  
+  const headerStr = headers.join('').toLowerCase()
+  if (headerStr.includes('微信') && headerStr.includes('交易')) {
+    return '微信支付账单'
+  }
+  if (headerStr.includes('alipay') || (headerStr.includes('支付宝') && headerStr.includes('交易'))) {
+    return '支付宝'
+  }
+  
   return null
+}
+
+function filterValidRecords(records, headers) {
+  const software = detectSoftware(headers)
+  const isWechat = software && software.includes('微信')
+  
+  return records.filter(record => {
+    const status = record['当前状态'] || record['交易状态'] || record['状态'] || ''
+    const statusStr = String(status).toLowerCase()
+    
+    if (isWechat) {
+      if (statusStr.includes('已全额退款') || 
+          statusStr.includes('已退款') || 
+          statusStr.includes('已关闭') || 
+          statusStr.includes('交易关闭') ||
+          statusStr.includes('已删除') ||
+          statusStr.includes('失败')) {
+        return false
+      }
+    }
+    
+    return true
+  })
 }
 
 function autoMapFields(headers) {
   const mapping = {}
   const headerLowerMap = {}
+  const headersLower = headers.map(h => h.toLowerCase().trim())
   
   headers.forEach(header => {
     headerLowerMap[header.toLowerCase().trim()] = header
@@ -2249,8 +2380,21 @@ function autoMapFields(headers) {
   for (const [field, possibleNames] of Object.entries(FIELD_MAPPINGS)) {
     for (const name of possibleNames) {
       const lowerName = name.toLowerCase()
+      
       if (headerLowerMap[lowerName]) {
         mapping[field] = headerLowerMap[lowerName]
+        break
+      }
+      
+      const exactMatch = headersLower.find(h => h === lowerName)
+      if (exactMatch) {
+        mapping[field] = headerLowerMap[exactMatch]
+        break
+      }
+      
+      const fuzzyMatch = headersLower.find(h => h.includes(lowerName) || lowerName.includes(h))
+      if (fuzzyMatch) {
+        mapping[field] = headerLowerMap[fuzzyMatch]
         break
       }
     }
@@ -2262,17 +2406,23 @@ function autoMapFields(headers) {
 function normalizeDate(dateStr) {
   if (!dateStr) return ''
   
+  let cleaned = String(dateStr).trim()
+    .replace(/\s+.*$/, '')
+    .replace(/[年月]/g, '-')
+    .replace(/日/g, '')
+    .replace(/\./g, '-')
+  
   const patterns = [
-    /(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})/,
-    /(\d{4})-(\d{2})-(\d{2})/,
-    /(\d{4})\/(\d{2})\/(\d{2})/,
-    /(\d{4})年(\d{2})月(\d{2})日/,
-    /(\d{4})(\d{2})(\d{2})/,
-    /(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/
+    /(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/,
+    /^(\d{4})(\d{2})(\d{2})$/,
+    /^(\d{4})-(\d{2})-(\d{2})/,
+    /^(\d{4})\/(\d{2})\/(\d{2})/,
+    /(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/,
+    /^(\d{4})年(\d{1,2})月(\d{1,2})日/
   ]
   
   for (const pattern of patterns) {
-    const match = dateStr.match(pattern)
+    const match = cleaned.match(pattern)
     if (match) {
       let year, month, day
       if (match[1].length === 4) {
@@ -2286,12 +2436,28 @@ function normalizeDate(dateStr) {
       } else {
         continue
       }
-      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      
+      const y = parseInt(year, 10)
+      const m = parseInt(month, 10)
+      const d = parseInt(day, 10)
+      
+      if (y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return `${String(y)}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      }
     }
   }
   
-  const date = new Date(dateStr)
+  const date = new Date(cleaned)
   if (!isNaN(date.getTime())) {
+    const year = date.getFullYear()
+    if (year >= 2000 && year <= 2100) {
+      return date.toISOString().split('T')[0]
+    }
+  }
+  
+  const excelDate = parseFloat(cleaned)
+  if (!isNaN(excelDate) && excelDate > 40000 && excelDate < 80000) {
+    const date = new Date((excelDate - 25569) * 86400000)
     return date.toISOString().split('T')[0]
   }
   
@@ -2301,21 +2467,47 @@ function normalizeDate(dateStr) {
 function normalizeAmount(amountStr) {
   if (amountStr === null || amountStr === undefined || amountStr === '') return 0
   
-  let cleaned = String(amountStr).replace(/[￥¥$,\s]/g, '').trim()
+  let cleaned = String(amountStr)
+    .replace(/[￥¥$,\s]/g, '')
+    .replace(/（.*?）/g, '')
+    .replace(/\(.*?\)/g, '')
+    .replace(/元/g, '')
+    .replace(/CNY/g, '')
+    .replace(/人民币/g, '')
+    .trim()
   
   if (cleaned === '') return 0
+  
+  const match = cleaned.match(/-?\d+\.?\d*/)
+  if (match) {
+    cleaned = match[0]
+  }
   
   const amount = parseFloat(cleaned)
   return isNaN(amount) ? 0 : Math.abs(amount)
 }
 
-function normalizeType(typeStr) {
-  if (!typeStr) return 'expense'
+function normalizeType(typeStr, amountStr) {
+  if (!typeStr) {
+    if (amountStr && String(amountStr).includes('收入')) {
+      return 'income'
+    }
+    return 'expense'
+  }
   
   const lowerType = String(typeStr).toLowerCase().trim()
   
-  if (TYPE_MAPPINGS[lowerType]) {
-    return TYPE_MAPPINGS[lowerType]
+  for (const [key, value] of Object.entries(TYPE_MAPPINGS)) {
+    if (lowerType.includes(key.toLowerCase())) {
+      return value
+    }
+  }
+  
+  if (amountStr) {
+    const amountNum = normalizeAmount(amountStr)
+    if (amountNum > 0) {
+      return 'expense'
+    }
   }
   
   return 'expense'
@@ -2394,12 +2586,18 @@ ipcMain.handle('parse-import-file', async (event, filePath) => {
     const software = detectSoftware(headers)
     const autoMapping = autoMapFields(headers)
     
+    const filteredRows = filterValidRecords(rows, headers)
+    const originalCount = rows.length
+    const filteredCount = originalCount - filteredRows.length
+    
     return {
       success: true,
       data: {
         headers,
-        rows,
-        totalRows: rows.length,
+        rows: filteredRows,
+        totalRows: filteredRows.length,
+        originalRowCount: originalCount,
+        filteredRowCount: filteredCount,
         software,
         autoMapping
       }
@@ -2446,10 +2644,11 @@ ipcMain.handle('preview-import-data', (event, { rows, fieldMapping, categories, 
   const warnings = []
   
   rows.forEach((row, index) => {
+    const rawAmount = row[fieldMapping.amount]
     const record = {
       date: normalizeDate(row[fieldMapping.date]),
-      amount: normalizeAmount(row[fieldMapping.amount]),
-      type: normalizeType(row[fieldMapping.type]),
+      amount: normalizeAmount(rawAmount),
+      type: normalizeType(row[fieldMapping.type], rawAmount),
       categoryName: row[fieldMapping.category] || '',
       remark: row[fieldMapping.remark] || '',
       accountName: row[fieldMapping.accountName] || defaultAccountName || '',

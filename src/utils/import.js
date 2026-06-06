@@ -5,10 +5,30 @@ export const FIELD_LABELS = {
   category: '分类',
   remark: '备注',
   accountName: '账户',
-  merchant: '商家'
+  merchant: '商家',
+  status: '交易状态'
 }
 
 export const REQUIRED_FIELDS = ['date', 'amount', 'type']
+
+export const WECHAT_STATUS_FILTERS = [
+  '已全额退款',
+  '已退款',
+  '已关闭',
+  '交易关闭',
+  '已删除',
+  '失败',
+  '支付失败',
+  '交易失败'
+]
+
+export function isWechatStatusInvalid(status) {
+  if (!status) return false
+  const statusStr = String(status).toLowerCase()
+  return WECHAT_STATUS_FILTERS.some(filter => 
+    statusStr.includes(filter.toLowerCase())
+  )
+}
 
 export function formatSeconds(seconds) {
   const mins = Math.floor(seconds / 60)

@@ -38,21 +38,42 @@
           </span>
         </el-alert>
         
+        <el-alert 
+          v-if="parseResult && parseResult.filteredRowCount > 0"
+          type="info" 
+          show-icon
+          :closable="false"
+          style="margin-top: 16px;">
+          <div slot="title">
+            <i class="el-icon-info"></i>
+            已自动过滤 <strong>{{ parseResult.filteredRowCount }}</strong> 条无效记录
+            <span style="color: #909399; font-size: 12px; margin-left: 8px;">
+              （包括已退款、已关闭、交易失败等）
+            </span>
+          </div>
+        </el-alert>
+        
         <div v-if="parseResult && !isParsing" class="parse-summary">
           <el-row :gutter="20">
-            <el-col :span="8">
+            <el-col :span="6">
               <div class="stat-item">
                 <div class="stat-value">{{ parseResult.totalRows }}</div>
-                <div class="stat-label">数据行数</div>
+                <div class="stat-label">有效数据</div>
               </div>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="6">
+              <div class="stat-item filtered" v-if="parseResult.originalRowCount">
+                <div class="stat-value">{{ parseResult.originalRowCount }}</div>
+                <div class="stat-label">原始记录</div>
+              </div>
+            </el-col>
+            <el-col :span="6">
               <div class="stat-item">
                 <div class="stat-value">{{ parseResult.headers.length }}</div>
                 <div class="stat-label">字段数</div>
               </div>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="6">
               <div class="stat-item">
                 <div class="stat-value">
                   {{ Object.keys(parseResult.autoMapping).filter(k => parseResult.autoMapping[k]).length }}
