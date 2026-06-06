@@ -95,12 +95,63 @@
     <main class="main-content">
       <router-view />
     </main>
+
+    <el-dialog
+      title="周期账单确认"
+      :visible.sync="showConfirmDialog"
+      width="420px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
+      <div v-if="currentConfirmation" class="confirm-content">
+        <div class="confirm-icon" :class="currentConfirmation.type">
+          {{ currentConfirmation.type === 'income' ? '📈' : '📉' }}
+        </div>
+        <div class="confirm-info">
+          <div class="confirm-title">
+            是否生成 "{{ currentConfirmation.billName }}" 记录？
+          </div>
+          <div class="confirm-detail">
+            <div class="detail-row">
+              <span class="label">类型：</span>
+              <span :class="currentConfirmation.type">
+                {{ currentConfirmation.type === 'income' ? '收入' : '支出' }}
+              </span>
+            </div>
+            <div class="detail-row">
+              <span class="label">金额：</span>
+              <span class="amount" :class="currentConfirmation.type">
+                {{ currentConfirmation.type === 'income' ? '+' : '-' }}¥{{ formatMoney(currentConfirmation.amount) }}
+              </span>
+            </div>
+            <div class="detail-row">
+              <span class="label">分类：</span>
+              <span>{{ currentConfirmation.categoryName }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">账户：</span>
+              <span>{{ currentConfirmation.accountName }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">日期：</span>
+              <span>{{ currentConfirmation.date }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <span slot="footer">
+        <el-button @click="handleSkipConfirmation">跳过本期</el-button>
+        <el-button type="primary" @click="handleConfirmGenerate">确认生成</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { recordApi, categoryApi, accountApi } from '@/api'
-import { formatMoney, getMonthRange } from '@/utils'
+import { recordApi, categoryApi, accountApi, recurringBillApi } from '@/api'
+import { formatMoney, getMonthRange, formatDate } from '@/utils'
+
+const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
 
 export default {
   name: 'Layout',
@@ -111,7 +162,10 @@ export default {
       accounts: [],
       monthSummary: null,
       accountOverview: null,
-      reminders: []
+      reminders: [],
+      pendingConfirmations: [],
+      showConfirmDialog: false,
+      currentConfirmation: null
     }
   },
   computed: {
@@ -124,20 +178,95 @@ export default {
   },
   created() {
     this.loadData()
+    this.setupIpcListeners()
+  },
+  beforeDestroy() {
+    if (ipcRenderer) {
+      ipcRenderer.removeAllListeners('check-recurring-bills')
+    }
   },
   methods: {
     formatMoney,
+    setupIpcListeners() {
+      if (ipcRenderer) {
+        ipcRenderer.on('check-recurring-bills', () => {
+          this.checkRecurringBills()
+        })
+      }
+    },
+    async checkRecurringBills() {
+      const result = await recurringBillApi.checkAndGenerate()
+      if (result) {
+        if (result.generatedRecords && result.generatedRecords.length > 0) {
+          this.$message.success(`已自动生成 ${result.generatedRecords.length} 条周期账单记录`)
+          this.loadData()
+        }
+        if (result.pendingConfirmations && result.pendingConfirmations.length > 0) {
+          this.pendingConfirmations = result.pendingConfirmations
+          this.showNextConfirmation()
+        }
+      }
+    },
+    showNextConfirmation() {
+      if (this.pendingConfirmations.length > 0) {
+        this.currentConfirmation = this.pendingConfirmations[0]
+        this.showConfirmDialog = true
+      }
+    },
+    async handleConfirmGenerate() {
+      if (!this.currentConfirmation) return
+      
+      const record = await recurringBillApi.generateRecord(
+        this.currentConfirmation.billId,
+        this.currentConfirmation.date
+      )
+      
+      if (record) {
+        this.$message.success(`已生成记录: ${this.currentConfirmation.billName}`)
+      }
+      
+      this.pendingConfirmations.shift()
+      this.showConfirmDialog = false
+      this.currentConfirmation = null
+      this.loadData()
+      
+      setTimeout(() => {
+        this.showNextConfirmation()
+      }, 500)
+    },
+    async handleSkipConfirmation() {
+      if (!this.currentConfirmation) return
+      
+      await recurringBillApi.skipDate(
+        this.currentConfirmation.billId,
+        this.currentConfirmation.date
+      )
+      
+      this.$message.info(`已跳过: ${this.currentConfirmation.billName}`)
+      
+      this.pendingConfirmations.shift()
+      this.showConfirmDialog = false
+      this.currentConfirmation = null
+      
+      setTimeout(() => {
+        this.showNextConfirmation()
+      }, 500)
+    },
     async loadData() {
-      const [records, categories, accountOverview, reminders] = await Promise.all([
+      const [records, categories, accountOverview, creditCardReminders, recurringReminders] = await Promise.all([
         recordApi.getRecords(),
         categoryApi.getCategories(),
         accountApi.getAccountOverview(),
-        accountApi.getCreditCardReminders()
+        accountApi.getCreditCardReminders(),
+        recurringBillApi.getReminders()
       ])
       this.records = records || []
       this.categories = categories || []
       this.accountOverview = accountOverview
-      this.reminders = reminders || []
+      
+      const allReminders = [...(creditCardReminders || []), ...(recurringReminders || [])]
+      this.reminders = allReminders.sort((a, b) => a.days - b.days)
+      
       this.calculateMonthSummary()
     },
     calculateMonthSummary() {
@@ -430,5 +559,70 @@ export default {
   flex: 1;
   overflow: hidden;
   background: $bg-color;
+}
+
+.confirm-content {
+  display: flex;
+  gap: 16px;
+  padding: 16px 0;
+  
+  .confirm-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    flex-shrink: 0;
+    
+    &.income {
+      background: linear-gradient(135deg, #67C23A 0%, #52a82a 100%);
+    }
+    
+    &.expense {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+    }
+  }
+  
+  .confirm-info {
+    flex: 1;
+    
+    .confirm-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: $text-primary;
+      margin-bottom: 16px;
+    }
+    
+    .confirm-detail {
+      .detail-row {
+        display: flex;
+        margin-bottom: 8px;
+        font-size: 14px;
+        
+        .label {
+          color: $text-secondary;
+          width: 60px;
+          flex-shrink: 0;
+        }
+        
+        .income {
+          color: $income-color;
+          font-weight: 500;
+        }
+        
+        .expense {
+          color: $expense-color;
+          font-weight: 500;
+        }
+        
+        .amount {
+          font-weight: 600;
+          font-size: 15px;
+        }
+      }
+    }
+  }
 }
 </style>

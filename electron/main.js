@@ -803,7 +803,501 @@ ipcMain.handle('export-report', async (event, options) => {
   return await handleExportPdf(data)
 })
 
-app.on('ready', createWindow)
+const recurringBillTemplates = [
+  { id: 't1', name: '工资', type: 'income', icon: '💰', defaultAmount: 0, defaultCategoryId: 'i1', defaultPeriodType: 'monthly', description: '每月工资收入' },
+  { id: 't2', name: '房租', type: 'expense', icon: '🏠', defaultAmount: 0, defaultCategoryId: 'c5', defaultPeriodType: 'monthly', description: '每月房租支出' },
+  { id: 't3', name: '房贷', type: 'expense', icon: '🏡', defaultAmount: 0, defaultCategoryId: 'c5', defaultPeriodType: 'monthly', description: '每月房贷还款' },
+  { id: 't4', name: '信用卡还款', type: 'expense', icon: '💳', defaultAmount: 0, defaultCategoryId: 'c8', defaultPeriodType: 'monthly', description: '每月信用卡账单还款' },
+  { id: 't5', name: '定投', type: 'expense', icon: '📈', defaultAmount: 0, defaultCategoryId: 'c8', defaultPeriodType: 'monthly', description: '每月基金/股票定投' },
+  { id: 't6', name: '水电费', type: 'expense', icon: '💡', defaultAmount: 0, defaultCategoryId: 'c5', defaultPeriodType: 'monthly', description: '每月水电燃气费' },
+  { id: 't7', name: '网费', type: 'expense', icon: '🌐', defaultAmount: 0, defaultCategoryId: 'c8', defaultPeriodType: 'monthly', description: '每月宽带/手机话费' },
+  { id: 't8', name: '会员订阅', type: 'expense', icon: '🎵', defaultAmount: 0, defaultCategoryId: 'c4', defaultPeriodType: 'monthly', description: '视频/音乐会员订阅' },
+  { id: 't9', name: '餐补', type: 'income', icon: '🍱', defaultAmount: 0, defaultCategoryId: 'i4', defaultPeriodType: 'daily', description: '每日餐补' },
+  { id: 't10', name: '年终奖', type: 'income', icon: '🎁', defaultAmount: 0, defaultCategoryId: 'i2', defaultPeriodType: 'yearly', description: '每年年终奖' }
+]
+
+function addDays(dateStr, days) {
+  const date = new Date(dateStr)
+  date.setDate(date.getDate() + days)
+  return date.toISOString().split('T')[0]
+}
+
+function addMonths(dateStr, months) {
+  const date = new Date(dateStr)
+  date.setMonth(date.getMonth() + months)
+  return date.toISOString().split('T')[0]
+}
+
+function addYears(dateStr, years) {
+  const date = new Date(dateStr)
+  date.setFullYear(date.getFullYear() + years)
+  return date.toISOString().split('T')[0]
+}
+
+function getNextOccurrence(bill, fromDate = new Date().toISOString().split('T')[0]) {
+  let nextDate = bill.startDate
+  const today = fromDate
+  
+  while (nextDate < today) {
+    switch (bill.periodType) {
+      case 'daily':
+        nextDate = addDays(nextDate, 1)
+        break
+      case 'weekly':
+        nextDate = addDays(nextDate, 7)
+        break
+      case 'monthly':
+        nextDate = addMonths(nextDate, 1)
+        break
+      case 'yearly':
+        nextDate = addYears(nextDate, 1)
+        break
+      case 'custom':
+        nextDate = addDays(nextDate, bill.customInterval || 1)
+        break
+      default:
+        nextDate = addDays(nextDate, 1)
+    }
+    
+    if (bill.endDate && nextDate > bill.endDate) {
+      return null
+    }
+  }
+  
+  if (bill.endDate && nextDate > bill.endDate) {
+    return null
+  }
+  
+  return nextDate
+}
+
+function getAllOccurrences(bill, startDate, endDate) {
+  const occurrences = []
+  let currentDate = bill.startDate
+  
+  while (currentDate <= endDate) {
+    if (currentDate >= startDate) {
+      const isException = bill.exceptions && bill.exceptions.includes(currentDate)
+      const alreadyGenerated = bill.generatedRecords && bill.generatedRecords.some(
+        g => g.date === currentDate && (g.status === 'generated' || g.status === 'confirmed')
+      )
+      
+      if (!isException && !alreadyGenerated) {
+        occurrences.push(currentDate)
+      }
+    }
+    
+    switch (bill.periodType) {
+      case 'daily':
+        currentDate = addDays(currentDate, 1)
+        break
+      case 'weekly':
+        currentDate = addDays(currentDate, 7)
+        break
+      case 'monthly':
+        currentDate = addMonths(currentDate, 1)
+        break
+      case 'yearly':
+        currentDate = addYears(currentDate, 1)
+        break
+      case 'custom':
+        currentDate = addDays(currentDate, bill.customInterval || 1)
+        break
+      default:
+        currentDate = addDays(currentDate, 1)
+    }
+    
+    if (bill.endDate && currentDate > bill.endDate) {
+      break
+    }
+  }
+  
+  return occurrences
+}
+
+function generateRecordFromBill(bill, date) {
+  return {
+    type: bill.type,
+    amount: bill.amount,
+    categoryId: bill.categoryId,
+    categoryName: bill.categoryName,
+    accountId: bill.accountId,
+    accountName: bill.accountName,
+    remark: bill.remark || bill.name,
+    date: date,
+    recurringBillId: bill.id
+  }
+}
+
+ipcMain.handle('get-recurring-bill-templates', () => {
+  return recurringBillTemplates
+})
+
+ipcMain.handle('get-recurring-bills', () => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  return readJsonFile(filePath) || []
+})
+
+ipcMain.handle('add-recurring-bill', (event, bill) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  
+  const newBill = {
+    ...bill,
+    id: Date.now().toString(),
+    status: 'active',
+    exceptions: bill.exceptions || [],
+    generatedRecords: bill.generatedRecords || [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
+  bills.push(newBill)
+  writeJsonFile(filePath, bills)
+  return newBill
+})
+
+ipcMain.handle('update-recurring-bill', (event, bill) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const index = bills.findIndex(b => b.id === bill.id)
+  
+  if (index !== -1) {
+    bills[index] = { 
+      ...bills[index], 
+      ...bill, 
+      updatedAt: new Date().toISOString() 
+    }
+    writeJsonFile(filePath, bills)
+    return bills[index]
+  }
+  return null
+})
+
+ipcMain.handle('delete-recurring-bill', (event, id) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const filtered = bills.filter(b => b.id !== id)
+  writeJsonFile(filePath, filtered)
+  return true
+})
+
+ipcMain.handle('toggle-recurring-bill-status', (event, id) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const bill = bills.find(b => b.id === id)
+  
+  if (bill) {
+    bill.status = bill.status === 'active' ? 'paused' : 'active'
+    bill.updatedAt = new Date().toISOString()
+    writeJsonFile(filePath, bills)
+    return bill
+  }
+  return null
+})
+
+ipcMain.handle('add-exception-date', (event, billId, date) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const bill = bills.find(b => b.id === billId)
+  
+  if (bill) {
+    if (!bill.exceptions) {
+      bill.exceptions = []
+    }
+    if (!bill.exceptions.includes(date)) {
+      bill.exceptions.push(date)
+    }
+    bill.updatedAt = new Date().toISOString()
+    writeJsonFile(filePath, bills)
+    return bill
+  }
+  return null
+})
+
+ipcMain.handle('remove-exception-date', (event, billId, date) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const bill = bills.find(b => b.id === billId)
+  
+  if (bill && bill.exceptions) {
+    bill.exceptions = bill.exceptions.filter(d => d !== date)
+    bill.updatedAt = new Date().toISOString()
+    writeJsonFile(filePath, bills)
+    return bill
+  }
+  return null
+})
+
+ipcMain.handle('get-next-occurrence', (event, billId) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const bill = bills.find(b => b.id === billId)
+  
+  if (bill && bill.status === 'active') {
+    return getNextOccurrence(bill)
+  }
+  return null
+})
+
+ipcMain.handle('get-upcoming-bills', (event, daysAhead = 30) => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const today = new Date().toISOString().split('T')[0]
+  const endDate = addDays(today, daysAhead)
+  
+  const upcoming = []
+  
+  bills.forEach(bill => {
+    if (bill.status !== 'active') return
+    
+    const occurrences = getAllOccurrences(bill, today, endDate)
+    
+    occurrences.forEach(date => {
+      const isException = bill.exceptions && bill.exceptions.includes(date)
+      if (!isException) {
+        upcoming.push({
+          billId: bill.id,
+          billName: bill.name,
+          type: bill.type,
+          amount: bill.amount,
+          categoryName: bill.categoryName,
+          accountName: bill.accountName,
+          date: date,
+          autoGenerate: bill.autoGenerate,
+          remindDays: bill.remindDays || 0,
+          icon: bill.icon || '📅'
+        })
+      }
+    })
+  })
+  
+  return upcoming.sort((a, b) => new Date(a.date) - new Date(b.date))
+})
+
+ipcMain.handle('generate-recurring-record', async (event, billId, date) => {
+  const billsPath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(billsPath) || []
+  const bill = bills.find(b => b.id === billId)
+  
+  if (!bill) return null
+  
+  const recordData = generateRecordFromBill(bill, date)
+  const recordsPath = path.join(getDataPath(), 'records.json')
+  const records = readJsonFile(recordsPath) || []
+  
+  const newRecord = {
+    ...recordData,
+    id: Date.now().toString(),
+    createdAt: new Date().toISOString()
+  }
+  
+  records.unshift(newRecord)
+  writeJsonFile(recordsPath, records)
+  
+  if (!bill.generatedRecords) {
+    bill.generatedRecords = []
+  }
+  
+  const existingIndex = bill.generatedRecords.findIndex(g => g.date === date)
+  if (existingIndex !== -1) {
+    bill.generatedRecords[existingIndex] = {
+      date,
+      recordId: newRecord.id,
+      status: 'generated'
+    }
+  } else {
+    bill.generatedRecords.push({
+      date,
+      recordId: newRecord.id,
+      status: 'generated'
+    })
+  }
+  
+  bill.updatedAt = new Date().toISOString()
+  writeJsonFile(billsPath, bills)
+  
+  recalculateAllAccountBalances()
+  
+  return newRecord
+})
+
+ipcMain.handle('skip-recurring-date', (event, billId, date) => {
+  const billsPath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(billsPath) || []
+  const bill = bills.find(b => b.id === billId)
+  
+  if (!bill) return null
+  
+  if (!bill.generatedRecords) {
+    bill.generatedRecords = []
+  }
+  
+  const existingIndex = bill.generatedRecords.findIndex(g => g.date === date)
+  if (existingIndex !== -1) {
+    bill.generatedRecords[existingIndex] = {
+      date,
+      recordId: null,
+      status: 'skipped'
+    }
+  } else {
+    bill.generatedRecords.push({
+      date,
+      recordId: null,
+      status: 'skipped'
+    })
+  }
+  
+  if (!bill.exceptions) {
+    bill.exceptions = []
+  }
+  if (!bill.exceptions.includes(date)) {
+    bill.exceptions.push(date)
+  }
+  
+  bill.updatedAt = new Date().toISOString()
+  writeJsonFile(billsPath, bills)
+  
+  return bill
+})
+
+ipcMain.handle('get-recurring-reminders', () => {
+  const filePath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(filePath) || []
+  const today = new Date()
+  const todayStr = today.toISOString().split('T')[0]
+  const reminders = []
+  
+  bills.forEach(bill => {
+    if (bill.status !== 'active' || !bill.remindDays || bill.remindDays <= 0) return
+    
+    const nextDate = getNextOccurrence(bill)
+    if (!nextDate) return
+    
+    const nextDateObj = new Date(nextDate)
+    const diffTime = nextDateObj - today
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+    
+    if (diffDays >= 0 && diffDays <= bill.remindDays) {
+      reminders.push({
+        billId: bill.id,
+        billName: bill.name,
+        type: bill.type,
+        amount: bill.amount,
+        date: nextDate,
+        days: diffDays,
+        autoGenerate: bill.autoGenerate,
+        message: `${bill.name} 将在 ${diffDays} 天后${bill.type === 'income' ? '到账' : '支出'} ¥${bill.amount.toFixed(2)}`
+      })
+    }
+  })
+  
+  return reminders.sort((a, b) => a.days - b.days)
+})
+
+ipcMain.handle('check-and-generate-recurring-bills', () => {
+  const billsPath = path.join(getDataPath(), 'recurring-bills.json')
+  const bills = readJsonFile(billsPath) || []
+  const today = new Date().toISOString().split('T')[0]
+  const generatedRecords = []
+  const pendingConfirmations = []
+  
+  bills.forEach(bill => {
+    if (bill.status !== 'active') return
+    
+    const nextDate = getNextOccurrence(bill, today)
+    if (!nextDate || nextDate !== today) return
+    
+    const isException = bill.exceptions && bill.exceptions.includes(today)
+    const alreadyGenerated = bill.generatedRecords && bill.generatedRecords.some(
+      g => g.date === today && (g.status === 'generated' || g.status === 'confirmed')
+    )
+    
+    if (isException || alreadyGenerated) return
+    
+    if (bill.autoGenerate) {
+      const recordsPath = path.join(getDataPath(), 'records.json')
+      const records = readJsonFile(recordsPath) || []
+      const recordData = generateRecordFromBill(bill, today)
+      
+      const newRecord = {
+        ...recordData,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        createdAt: new Date().toISOString()
+      }
+      
+      records.unshift(newRecord)
+      writeJsonFile(recordsPath, records)
+      
+      if (!bill.generatedRecords) {
+        bill.generatedRecords = []
+      }
+      
+      const existingIndex = bill.generatedRecords.findIndex(g => g.date === today)
+      if (existingIndex !== -1) {
+        bill.generatedRecords[existingIndex] = {
+          date: today,
+          recordId: newRecord.id,
+          status: 'generated'
+        }
+      } else {
+        bill.generatedRecords.push({
+          date: today,
+          recordId: newRecord.id,
+          status: 'generated'
+        })
+      }
+      
+      bill.updatedAt = new Date().toISOString()
+      generatedRecords.push(newRecord)
+    } else {
+      pendingConfirmations.push({
+        billId: bill.id,
+        billName: bill.name,
+        type: bill.type,
+        amount: bill.amount,
+        categoryName: bill.categoryName,
+        accountName: bill.accountName,
+        date: today
+      })
+    }
+  })
+  
+  if (generatedRecords.length > 0) {
+    writeJsonFile(billsPath, bills)
+    recalculateAllAccountBalances()
+  }
+  
+  return {
+    generatedRecords,
+    pendingConfirmations
+  }
+})
+
+let recurringCheckInterval = null
+
+function startRecurringBillCheck() {
+  if (recurringCheckInterval) {
+    clearInterval(recurringCheckInterval)
+  }
+  
+  recurringCheckInterval = setInterval(() => {
+    if (mainWindow) {
+      mainWindow.webContents.send('check-recurring-bills')
+    }
+  }, 60 * 60 * 1000)
+}
+
+app.on('ready', () => {
+  createWindow()
+  startRecurringBillCheck()
+  
+  setTimeout(() => {
+    if (mainWindow) {
+      mainWindow.webContents.send('check-recurring-bills')
+    }
+  }, 3000)
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

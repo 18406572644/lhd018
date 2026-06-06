@@ -5,6 +5,7 @@ import './styles/global.scss'
 import {
   Button,
   Input,
+  InputNumber,
   DatePicker,
   Select,
   Option,
@@ -36,12 +37,17 @@ import {
   Upload,
   Empty,
   Alert,
-  Progress
+  Progress,
+  Switch,
+  Tooltip
 } from 'element-ui'
 
 Vue.use(Button)
 Vue.use(Input)
+Vue.use(InputNumber)
 Vue.use(DatePicker)
+Vue.use(Switch)
+Vue.use(Tooltip)
 Vue.use(Select)
 Vue.use(Option)
 Vue.use(Radio)

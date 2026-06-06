@@ -40,3 +40,20 @@ export const accountApi = {
 export const statsApi = {
   exportReport: (options) => callIpc('export-report', options)
 }
+
+export const recurringBillApi = {
+  getTemplates: () => callIpc('get-recurring-bill-templates'),
+  getBills: () => callIpc('get-recurring-bills'),
+  addBill: (bill) => callIpc('add-recurring-bill', bill),
+  updateBill: (bill) => callIpc('update-recurring-bill', bill),
+  deleteBill: (id) => callIpc('delete-recurring-bill', id),
+  toggleStatus: (id) => callIpc('toggle-recurring-bill-status', id),
+  addExceptionDate: (billId, date) => callIpc('add-exception-date', billId, date),
+  removeExceptionDate: (billId, date) => callIpc('remove-exception-date', billId, date),
+  getNextOccurrence: (billId) => callIpc('get-next-occurrence', billId),
+  getUpcomingBills: (daysAhead) => callIpc('get-upcoming-bills', daysAhead),
+  generateRecord: (billId, date) => callIpc('generate-recurring-record', billId, date),
+  skipDate: (billId, date) => callIpc('skip-recurring-date', billId, date),
+  getReminders: () => callIpc('get-recurring-reminders'),
+  checkAndGenerate: () => callIpc('check-and-generate-recurring-bills')
+}

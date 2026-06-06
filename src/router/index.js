@@ -39,6 +39,12 @@ const routes = [
         name: 'Accounts',
         component: () => import('@/views/Accounts.vue'),
         meta: { title: '账户管理', icon: 'el-icon-wallet' }
+      },
+      {
+        path: 'recurring',
+        name: 'Recurring',
+        component: () => import('@/views/Recurring.vue'),
+        meta: { title: '周期账单', icon: 'el-icon-date' }
       }
     ]
   }

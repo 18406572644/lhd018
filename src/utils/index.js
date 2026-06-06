@@ -210,3 +210,60 @@ export function groupByCategory(records, categories, type) {
 export function getDaysInMonth(year, month) {
   return new Date(year, month, 0).getDate()
 }
+
+function addDays(dateStr, days) {
+  const date = new Date(dateStr)
+  date.setDate(date.getDate() + days)
+  return date.toISOString().split('T')[0]
+}
+
+function addMonths(dateStr, months) {
+  const date = new Date(dateStr)
+  date.setMonth(date.getMonth() + months)
+  return date.toISOString().split('T')[0]
+}
+
+function addYears(dateStr, years) {
+  const date = new Date(dateStr)
+  date.setFullYear(date.getFullYear() + years)
+  return date.toISOString().split('T')[0]
+}
+
+export function getNextOccurrence(bill, fromDate = new Date().toISOString().split('T')[0]) {
+  if (!bill || bill.status !== 'active') return null
+  
+  let nextDate = bill.startDate
+  const today = fromDate
+  
+  while (nextDate < today) {
+    switch (bill.periodType) {
+      case 'daily':
+        nextDate = addDays(nextDate, 1)
+        break
+      case 'weekly':
+        nextDate = addDays(nextDate, 7)
+        break
+      case 'monthly':
+        nextDate = addMonths(nextDate, 1)
+        break
+      case 'yearly':
+        nextDate = addYears(nextDate, 1)
+        break
+      case 'custom':
+        nextDate = addDays(nextDate, bill.customInterval || 1)
+        break
+      default:
+        nextDate = addDays(nextDate, 1)
+    }
+    
+    if (bill.endDate && nextDate > bill.endDate) {
+      return null
+    }
+  }
+  
+  if (bill.endDate && nextDate > bill.endDate) {
+    return null
+  }
+  
+  return nextDate
+}
