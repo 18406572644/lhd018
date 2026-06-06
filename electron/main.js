@@ -2902,9 +2902,730 @@ ipcMain.handle('rollback-import', (event, importTaskId) => {
   }
 })
 
+function getReportsPath() {
+  const dataDir = getDataPath()
+  const reportsDir = path.join(dataDir, 'reports')
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir, { recursive: true })
+  }
+  return reportsDir
+}
+
+function getReportTemplatesPath() {
+  return path.join(getReportsPath(), 'templates.json')
+}
+
+function getReportSubscriptionsPath() {
+  return path.join(getReportsPath(), 'subscriptions.json')
+}
+
+function getGeneratedReportsPath() {
+  const dir = path.join(getReportsPath(), 'generated')
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+const builtInTemplates = [
+  {
+    id: 'builtin-monthly-financial',
+    name: '月度财务报告',
+    type: 'builtin',
+    icon: '📊',
+    description: '包含月度收支概览、分类明细、趋势分析的完整财务报告',
+    layout: {
+      columns: 12,
+      components: [
+        { id: 'c1', type: 'overview-card', title: '本月收入', x: 0, y: 0, w: 3, h: 2, config: { metric: 'income', period: 'month' } },
+        { id: 'c2', type: 'overview-card', title: '本月支出', x: 3, y: 0, w: 3, h: 2, config: { metric: 'expense', period: 'month' } },
+        { id: 'c3', type: 'overview-card', title: '本月结余', x: 6, y: 0, w: 3, h: 2, config: { metric: 'balance', period: 'month' } },
+        { id: 'c4', type: 'overview-card', title: '交易笔数', x: 9, y: 0, w: 3, h: 2, config: { metric: 'count', period: 'month' } },
+        { id: 'c5', type: 'divider', x: 0, y: 2, w: 12, h: 1, config: { title: '收支分析' } },
+        { id: 'c6', type: 'pie-chart', title: '支出分类占比', x: 0, y: 3, w: 6, h: 8, config: { dataType: 'expense', groupBy: 'category' } },
+        { id: 'c7', type: 'bar-chart', title: '每日收支对比', x: 6, y: 3, w: 6, h: 8, config: { dataType: 'both', groupBy: 'day' } },
+        { id: 'c8', type: 'divider', x: 0, y: 11, w: 12, h: 1, config: { title: '详细数据' } },
+        { id: 'c9', type: 'ranking', title: '支出分类排行', x: 0, y: 12, w: 6, h: 8, config: { dataType: 'expense', groupBy: 'category', limit: 10 } },
+        { id: 'c10', type: 'table', title: '交易明细', x: 6, y: 12, w: 6, h: 8, config: { limit: 20 } }
+      ]
+    },
+    createdAt: null,
+    updatedAt: null
+  },
+  {
+    id: 'builtin-yearly-analysis',
+    name: '年度收支分析',
+    type: 'builtin',
+    icon: '📈',
+    description: '年度收支趋势、同比环比分析、分类汇总',
+    layout: {
+      columns: 12,
+      components: [
+        { id: 'c1', type: 'overview-card', title: '年度收入', x: 0, y: 0, w: 3, h: 2, config: { metric: 'income', period: 'year' } },
+        { id: 'c2', type: 'overview-card', title: '年度支出', x: 3, y: 0, w: 3, h: 2, config: { metric: 'expense', period: 'year' } },
+        { id: 'c3', type: 'overview-card', title: '年度结余', x: 6, y: 0, w: 3, h: 2, config: { metric: 'balance', period: 'year' } },
+        { id: 'c4', type: 'overview-card', title: '月均支出', x: 9, y: 0, w: 3, h: 2, config: { metric: 'avg_expense', period: 'year' } },
+        { id: 'c5', type: 'line-chart', title: '月度收支趋势', x: 0, y: 2, w: 12, h: 8, config: { dataType: 'both', groupBy: 'month' } },
+        { id: 'c6', type: 'trend-compare', title: '同比环比分析', x: 0, y: 10, w: 12, h: 6, config: { compareType: 'yoy_mom' } },
+        { id: 'c7', type: 'bar-chart', title: '各月支出对比', x: 0, y: 16, w: 12, h: 8, config: { dataType: 'expense', groupBy: 'month' } }
+      ]
+    },
+    createdAt: null,
+    updatedAt: null
+  },
+  {
+    id: 'builtin-category-compare',
+    name: '分类消费对比',
+    type: 'builtin',
+    icon: '🎯',
+    description: '各分类消费占比、趋势对比、TOP榜单',
+    layout: {
+      columns: 12,
+      components: [
+        { id: 'c1', type: 'pie-chart', title: '消费分类占比', x: 0, y: 0, w: 6, h: 8, config: { dataType: 'expense', groupBy: 'category' } },
+        { id: 'c2', type: 'ranking', title: '消费分类TOP10', x: 6, y: 0, w: 6, h: 8, config: { dataType: 'expense', groupBy: 'category', limit: 10 } },
+        { id: 'c3', type: 'divider', x: 0, y: 8, w: 12, h: 1, config: { title: '分类趋势对比' } },
+        { id: 'c4', type: 'line-chart', title: '主要分类月度趋势', x: 0, y: 9, w: 12, h: 8, config: { dataType: 'expense', groupBy: 'category_month', topCategories: 5 } },
+        { id: 'c5', type: 'bar-chart', title: '各分类季度对比', x: 0, y: 17, w: 12, h: 8, config: { dataType: 'expense', groupBy: 'category_quarter' } }
+      ]
+    },
+    createdAt: null,
+    updatedAt: null
+  }
+]
+
+ipcMain.handle('get-report-templates', () => {
+  const filePath = getReportTemplatesPath()
+  const customTemplates = readJsonFile(filePath) || []
+  return [...builtInTemplates, ...customTemplates]
+})
+
+ipcMain.handle('save-report-template', (event, template) => {
+  const filePath = getReportTemplatesPath()
+  const templates = readJsonFile(filePath) || []
+  
+  if (template.id) {
+    const index = templates.findIndex(t => t.id === template.id)
+    if (index !== -1) {
+      templates[index] = {
+        ...templates[index],
+        ...template,
+        type: 'custom',
+        updatedAt: new Date().toISOString()
+      }
+      writeJsonFile(filePath, templates)
+      return templates[index]
+    }
+  }
+  
+  const newTemplate = {
+    ...template,
+    id: Date.now().toString(),
+    type: 'custom',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
+  templates.push(newTemplate)
+  writeJsonFile(filePath, templates)
+  return newTemplate
+})
+
+ipcMain.handle('delete-report-template', (event, id) => {
+  if (id.startsWith('builtin-')) {
+    return false
+  }
+  const filePath = getReportTemplatesPath()
+  const templates = readJsonFile(filePath) || []
+  const filtered = templates.filter(t => t.id !== id)
+  writeJsonFile(filePath, filtered)
+  return true
+})
+
+ipcMain.handle('export-report-template', async (event, templateId) => {
+  const filePath = getReportTemplatesPath()
+  const customTemplates = readJsonFile(filePath) || []
+  const allTemplates = [...builtInTemplates, ...customTemplates]
+  const template = allTemplates.find(t => t.id === templateId)
+  
+  if (!template) {
+    return { success: false, error: '模板不存在' }
+  }
+  
+  const exportData = {
+    ...template,
+    exportedAt: new Date().toISOString(),
+    version: '1.0'
+  }
+  
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出报表模板',
+    defaultPath: `${template.name}_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.json`,
+    filters: [{ name: '报表模板文件', extensions: ['json'] }]
+  })
+  
+  if (!result.canceled && result.filePath) {
+    fs.writeFileSync(result.filePath, JSON.stringify(exportData, null, 2), 'utf-8')
+    return { success: true, filePath: result.filePath }
+  }
+  
+  return { success: false, canceled: true }
+})
+
+ipcMain.handle('import-report-template', async (event) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '导入报表模板',
+    filters: [{ name: '报表模板文件', extensions: ['json'] }],
+    properties: ['openFile']
+  })
+  
+  if (!result.canceled && result.filePaths.length > 0) {
+    try {
+      const content = fs.readFileSync(result.filePaths[0], 'utf-8')
+      const templateData = JSON.parse(content)
+      
+      if (!templateData.name || !templateData.layout) {
+        return { success: false, error: '无效的模板文件' }
+      }
+      
+      const filePath = getReportTemplatesPath()
+      const templates = readJsonFile(filePath) || []
+      
+      const newTemplate = {
+        ...templateData,
+        id: Date.now().toString(),
+        type: 'custom',
+        name: templateData.name + ' (导入)',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+      
+      delete newTemplate.exportedAt
+      delete newTemplate.version
+      
+      templates.push(newTemplate)
+      writeJsonFile(filePath, templates)
+      
+      return { success: true, template: newTemplate }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  }
+  
+  return { success: false, canceled: true }
+})
+
+ipcMain.handle('get-report-subscriptions', () => {
+  const filePath = getReportSubscriptionsPath()
+  return readJsonFile(filePath) || []
+})
+
+ipcMain.handle('save-report-subscription', (event, subscription) => {
+  const filePath = getReportSubscriptionsPath()
+  const subscriptions = readJsonFile(filePath) || []
+  
+  if (subscription.id) {
+    const index = subscriptions.findIndex(s => s.id === subscription.id)
+    if (index !== -1) {
+      subscriptions[index] = {
+        ...subscriptions[index],
+        ...subscription,
+        updatedAt: new Date().toISOString()
+      }
+      writeJsonFile(filePath, subscriptions)
+      return subscriptions[index]
+    }
+  }
+  
+  const newSubscription = {
+    ...subscription,
+    id: Date.now().toString(),
+    status: 'active',
+    lastGenerated: null,
+    nextGenerate: calculateNextGenerate(subscription),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
+  subscriptions.push(newSubscription)
+  writeJsonFile(filePath, subscriptions)
+  return newSubscription
+})
+
+ipcMain.handle('delete-report-subscription', (event, id) => {
+  const filePath = getReportSubscriptionsPath()
+  const subscriptions = readJsonFile(filePath) || []
+  const filtered = subscriptions.filter(s => s.id !== id)
+  writeJsonFile(filePath, filtered)
+  return true
+})
+
+ipcMain.handle('toggle-report-subscription', (event, id) => {
+  const filePath = getReportSubscriptionsPath()
+  const subscriptions = readJsonFile(filePath) || []
+  const subscription = subscriptions.find(s => s.id === id)
+  
+  if (subscription) {
+    subscription.status = subscription.status === 'active' ? 'paused' : 'active'
+    subscription.updatedAt = new Date().toISOString()
+    if (subscription.status === 'active') {
+      subscription.nextGenerate = calculateNextGenerate(subscription)
+    }
+    writeJsonFile(filePath, subscriptions)
+    return subscription
+  }
+  return null
+})
+
+function calculateNextGenerate(subscription) {
+  const now = new Date()
+  const { frequency, dayOfWeek, dayOfMonth, time } = subscription
+  
+  let nextDate = new Date()
+  const [hours, minutes] = (time || '09:00').split(':').map(Number)
+  nextDate.setHours(hours, minutes, 0, 0)
+  
+  if (frequency === 'daily') {
+    if (nextDate <= now) {
+      nextDate.setDate(nextDate.getDate() + 1)
+    }
+  } else if (frequency === 'weekly') {
+    const targetDay = dayOfWeek || 1
+    const currentDay = nextDate.getDay()
+    let diff = targetDay - currentDay
+    if (diff < 0 || (diff === 0 && nextDate <= now)) {
+      diff += 7
+    }
+    nextDate.setDate(nextDate.getDate() + diff)
+  } else if (frequency === 'monthly') {
+    const targetDay = dayOfMonth || 1
+    nextDate.setDate(targetDay)
+    if (nextDate <= now) {
+      nextDate.setMonth(nextDate.getMonth() + 1)
+      nextDate.setDate(targetDay)
+    }
+  }
+  
+  return nextDate.toISOString()
+}
+
+async function generateReportPdf(reportData, outputPath) {
+  try {
+    const { jsPDF } = require('jspdf')
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    })
+    
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 15
+    let yPos = margin
+    
+    doc.setFontSize(20)
+    doc.setTextColor(40, 40, 40)
+    doc.text(reportData.title || '自定义报表', pageWidth / 2, yPos, { align: 'center' })
+    yPos += 10
+    
+    doc.setFontSize(10)
+    doc.setTextColor(100, 100, 100)
+    doc.text(`生成时间: ${new Date().toLocaleString('zh-CN')}`, pageWidth / 2, yPos, { align: 'center' })
+    yPos += 10
+    
+    if (reportData.filters) {
+      doc.setFontSize(10)
+      doc.setTextColor(80, 80, 80)
+      let filterText = '筛选条件: '
+      if (reportData.filters.startDate) filterText += `${reportData.filters.startDate} ~ ${reportData.filters.endDate || '至今'}`
+      if (reportData.filters.categoryIds && reportData.filters.categoryIds.length > 0) filterText += ` | 分类: ${reportData.filters.categoryIds.length}个`
+      if (reportData.filters.accountIds && reportData.filters.accountIds.length > 0) filterText += ` | 账户: ${reportData.filters.accountIds.length}个`
+      doc.text(filterText, margin, yPos)
+      yPos += 8
+    }
+    
+    doc.setDrawColor(200, 200, 200)
+    doc.line(margin, yPos, pageWidth - margin, yPos)
+    yPos += 5
+    
+    if (reportData.overview && reportData.overview.length > 0) {
+      doc.setFontSize(14)
+      doc.setTextColor(60, 60, 60)
+      doc.text('一、数据概览', margin, yPos)
+      yPos += 8
+      
+      const cardWidth = (pageWidth - 2 * margin) / reportData.overview.length
+      reportData.overview.forEach((item, index) => {
+        const xPos = margin + index * cardWidth
+        doc.setFillColor(245, 247, 250)
+        doc.roundedRect(xPos + 2, yPos, cardWidth - 4, 20, 3, 3, 'F')
+        
+        doc.setFontSize(10)
+        doc.setTextColor(80, 80, 80)
+        doc.text(item.title, xPos + 5, yPos + 8)
+        
+        doc.setFontSize(14)
+        doc.setTextColor(item.color || '#333333')
+        doc.text(item.value, xPos + 5, yPos + 16)
+      })
+      yPos += 30
+    }
+    
+    if (reportData.tables && reportData.tables.length > 0) {
+      reportData.tables.forEach(table => {
+        if (yPos > pageHeight - 40) {
+          doc.addPage()
+          yPos = margin
+        }
+        
+        doc.setFontSize(14)
+        doc.setTextColor(60, 60, 60)
+        doc.text(table.title || '数据表格', margin, yPos)
+        yPos += 8
+        
+        if (table.data && table.data.length > 0) {
+          const headers = Object.keys(table.data[0])
+          const colWidth = (pageWidth - 2 * margin) / headers.length
+          
+          doc.setFillColor(230, 230, 230)
+          doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F')
+          doc.setFontSize(10)
+          doc.setTextColor(60, 60, 60)
+          headers.forEach((header, i) => {
+            doc.text(header, margin + i * colWidth + 2, yPos + 6)
+          })
+          yPos += 8
+          
+          table.data.slice(0, 30).forEach(row => {
+            if (yPos > pageHeight - 15) {
+              doc.addPage()
+              yPos = margin
+            }
+            doc.setFontSize(9)
+            doc.setTextColor(80, 80, 80)
+            headers.forEach((header, i) => {
+              doc.text(String(row[header] || ''), margin + i * colWidth + 2, yPos + 5)
+            })
+            yPos += 6
+          })
+          yPos += 5
+        }
+      })
+    }
+    
+    doc.save(outputPath)
+    return true
+  } catch (error) {
+    console.error('Generate PDF error:', error)
+    return false
+  }
+}
+
+async function generateReportImage(reportData, outputPath) {
+  try {
+    const { jsPDF } = require('jspdf')
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    })
+    
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 15
+    let yPos = margin
+    
+    doc.setFontSize(20)
+    doc.setTextColor(40, 40, 40)
+    doc.text(reportData.title || '自定义报表', pageWidth / 2, yPos, { align: 'center' })
+    yPos += 10
+    
+    doc.setFontSize(10)
+    doc.setTextColor(100, 100, 100)
+    doc.text(`生成时间: ${new Date().toLocaleString('zh-CN')}`, pageWidth / 2, yPos, { align: 'center' })
+    yPos += 15
+    
+    if (reportData.overview && reportData.overview.length > 0) {
+      const cardWidth = (pageWidth - 2 * margin) / reportData.overview.length
+      reportData.overview.forEach((item, index) => {
+        const xPos = margin + index * cardWidth
+        doc.setFillColor(245, 247, 250)
+        doc.roundedRect(xPos + 2, yPos, cardWidth - 4, 25, 3, 3, 'F')
+        
+        doc.setFontSize(10)
+        doc.setTextColor(80, 80, 80)
+        doc.text(item.title, xPos + 5, yPos + 10)
+        
+        doc.setFontSize(16)
+        doc.setTextColor(item.color || '#333333')
+        doc.text(item.value, xPos + 5, yPos + 20)
+      })
+      yPos += 35
+    }
+    
+    const pngPath = outputPath.replace('.jpg', '.png').replace('.jpeg', '.png')
+    doc.save(pngPath)
+    
+    return true
+  } catch (error) {
+    console.error('Generate image error:', error)
+    return false
+  }
+}
+
+ipcMain.handle('generate-report-file', async (event, { reportData, format, outputDir, filename }) => {
+  try {
+    const dir = outputDir || getGeneratedReportsPath()
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const actualFilename = filename || `report_${timestamp}`
+    const outputPath = path.join(dir, `${actualFilename}.${format}`)
+    
+    let success = false
+    if (format === 'pdf') {
+      success = await generateReportPdf(reportData, outputPath)
+    } else if (format === 'jpg' || format === 'png') {
+      success = await generateReportImage(reportData, outputPath)
+    }
+    
+    if (success) {
+      return { success: true, filePath: outputPath }
+    } else {
+      return { success: false, error: '生成失败' }
+    }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('execute-report-subscription', async (event, subscriptionId) => {
+  const filePath = getReportSubscriptionsPath()
+  const subscriptions = readJsonFile(filePath) || []
+  const subscription = subscriptions.find(s => s.id === subscriptionId)
+  
+  if (!subscription) {
+    return { success: false, error: '订阅不存在' }
+  }
+  
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '生成报表文件',
+    defaultPath: `${subscription.name}_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.${subscription.format}`,
+    filters: [{ name: `${subscription.format.toUpperCase()} 文件`, extensions: [subscription.format] }]
+  })
+  
+  if (!result.canceled && result.filePath) {
+    return {
+      success: true,
+      subscription,
+      outputPath: result.filePath
+    }
+  }
+  
+  return { success: false, canceled: true }
+})
+
+function checkAndGenerateSubscriptions() {
+  const now = new Date()
+  const filePath = getReportSubscriptionsPath()
+  const subscriptions = readJsonFile(filePath) || []
+  const generatedReportsPath = getGeneratedReportsPath()
+  
+  subscriptions.forEach(async (subscription) => {
+    if (subscription.status !== 'active') return
+    
+    const nextGenerate = new Date(subscription.nextGenerate)
+    if (nextGenerate <= now) {
+      try {
+        if (mainWindow) {
+          mainWindow.webContents.send('trigger-report-subscription', {
+            subscriptionId: subscription.id,
+            templateId: subscription.templateId,
+            format: subscription.format,
+            outputDir: subscription.outputDir || generatedReportsPath,
+            filters: subscription.filters
+          })
+        }
+        
+        subscription.lastGenerated = now.toISOString()
+        subscription.nextGenerate = calculateNextGenerate(subscription)
+        subscription.updatedAt = now.toISOString()
+      } catch (error) {
+        console.error('Subscription generation error:', error)
+      }
+    }
+  })
+  
+  writeJsonFile(filePath, subscriptions)
+}
+
+let subscriptionCheckInterval = null
+
+function startSubscriptionCheck() {
+  if (subscriptionCheckInterval) {
+    clearInterval(subscriptionCheckInterval)
+  }
+  
+  subscriptionCheckInterval = setInterval(() => {
+    checkAndGenerateSubscriptions()
+  }, 60 * 60 * 1000)
+}
+
+ipcMain.handle('get-pivot-data', (event, config) => {
+  const recordsPath = path.join(getDataPath(), 'records.json')
+  const records = readJsonFile(recordsPath) || []
+  const categoriesPath = path.join(getDataPath(), 'categories.json')
+  const categories = readJsonFile(categoriesPath) || []
+  
+  const {
+    rowDimension = 'date',
+    columnDimension = 'type',
+    valueDimension = 'amount',
+    dateGranularity = 'month',
+    filters = {}
+  } = config
+  
+  let filteredRecords = records.filter(r => r.type !== 'transfer')
+  
+  if (filters.startDate) {
+    filteredRecords = filteredRecords.filter(r => r.date >= filters.startDate)
+  }
+  if (filters.endDate) {
+    filteredRecords = filteredRecords.filter(r => r.date <= filters.endDate)
+  }
+  if (filters.categoryIds && filters.categoryIds.length > 0) {
+    filteredRecords = filteredRecords.filter(r => filters.categoryIds.includes(r.categoryId))
+  }
+  if (filters.accountIds && filters.accountIds.length > 0) {
+    filteredRecords = filteredRecords.filter(r => filters.accountIds.includes(r.accountId))
+  }
+  if (filters.type) {
+    filteredRecords = filteredRecords.filter(r => r.type === filters.type)
+  }
+  
+  const getRowKey = (record) => {
+    const date = new Date(record.date)
+    switch (rowDimension) {
+      case 'date':
+        switch (dateGranularity) {
+          case 'day': return record.date
+          case 'week':
+            const weekStart = new Date(date)
+            weekStart.setDate(date.getDate() - date.getDay())
+            return weekStart.toISOString().split('T')[0]
+          case 'month': return record.date.substring(0, 7)
+          case 'quarter':
+            const quarter = Math.floor(date.getMonth() / 3) + 1
+            return `${date.getFullYear()}-Q${quarter}`
+          case 'year': return date.getFullYear().toString()
+          default: return record.date
+        }
+      case 'category': return record.categoryId
+      case 'account': return record.accountId
+      default: return record.date
+    }
+  }
+  
+  const getColumnKey = (record) => {
+    const date = new Date(record.date)
+    switch (columnDimension) {
+      case 'type': return record.type
+      case 'month': return record.date.substring(5, 7) + '月'
+      case 'quarter':
+        const quarter = Math.floor(date.getMonth() / 3) + 1
+        return `Q${quarter}`
+      default: return record.type
+    }
+  }
+  
+  const getValue = (record) => {
+    switch (valueDimension) {
+      case 'amount': return Number(record.amount)
+      case 'count': return 1
+      default: return Number(record.amount)
+    }
+  }
+  
+  const pivotData = {}
+  const rowKeys = new Set()
+  const columnKeys = new Set()
+  
+  filteredRecords.forEach(record => {
+    const rowKey = getRowKey(record)
+    const colKey = getColumnKey(record)
+    const value = getValue(record)
+    
+    rowKeys.add(rowKey)
+    columnKeys.add(colKey)
+    
+    if (!pivotData[rowKey]) {
+      pivotData[rowKey] = {}
+    }
+    if (!pivotData[rowKey][colKey]) {
+      pivotData[rowKey][colKey] = { sum: 0, count: 0, values: [] }
+    }
+    
+    pivotData[rowKey][colKey].sum += value
+    pivotData[rowKey][colKey].count += 1
+    pivotData[rowKey][colKey].values.push(value)
+  })
+  
+  const rows = Array.from(rowKeys).sort()
+  const columns = Array.from(columnKeys).sort()
+  
+  const tableData = rows.map(rowKey => {
+    const row = { _key: rowKey, _label: rowKey }
+    
+    if (rowDimension === 'category') {
+      const cat = categories.find(c => c.id === rowKey)
+      row._label = cat ? cat.name : rowKey
+    }
+    
+    let rowTotal = 0
+    columns.forEach(colKey => {
+      const cell = pivotData[rowKey]?.[colKey]
+      let cellValue = cell ? cell.sum : 0
+      
+      if (valueDimension === 'count') {
+        cellValue = cell ? cell.count : 0
+      } else if (valueDimension === 'percent') {
+        const colTotal = rows.reduce((sum, rk) => sum + (pivotData[rk]?.[colKey]?.sum || 0), 0)
+        cellValue = colTotal > 0 ? ((cell?.sum || 0) / colTotal * 100) : 0
+      }
+      
+      row[colKey] = cellValue
+      rowTotal += cell?.sum || 0
+    })
+    
+    row._total = rowTotal
+    return row
+  })
+  
+  const columnTotals = {}
+  columns.forEach(colKey => {
+    columnTotals[colKey] = rows.reduce((sum, rk) => {
+      const cell = pivotData[rk]?.[colKey]
+      return sum + (valueDimension === 'count' ? (cell?.count || 0) : (cell?.sum || 0))
+    }, 0)
+  })
+  
+  const grandTotal = Object.values(columnTotals).reduce((sum, val) => sum + val, 0)
+  
+  return {
+    rows,
+    columns,
+    tableData,
+    columnTotals,
+    grandTotal,
+    rowDimension,
+    columnDimension,
+    valueDimension,
+    dateGranularity
+  }
+})
+
 app.on('ready', () => {
   createWindow()
   startRecurringBillCheck()
+  startSubscriptionCheck()
   
   setTimeout(() => {
     if (mainWindow) {
@@ -2922,5 +3643,26 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (mainWindow === null) {
     createWindow()
+  }
+})
+
+ipcMain.handle('show-open-dialog', async (event, options) => {
+  const result = await dialog.showOpenDialog(mainWindow, options || {})
+  return result
+})
+
+ipcMain.handle('show-save-dialog', async (event, options) => {
+  const result = await dialog.showSaveDialog(mainWindow, options || {})
+  return result
+})
+
+ipcMain.handle('open-file', async (event, filePath) => {
+  try {
+    const { shell } = require('electron')
+    await shell.openPath(filePath)
+    return true
+  } catch (error) {
+    console.error('Open file error:', error)
+    return false
   }
 })

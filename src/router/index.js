@@ -63,6 +63,30 @@ const routes = [
         name: 'DataImport',
         component: () => import('@/views/DataImport.vue'),
         meta: { title: '数据导入', icon: 'el-icon-upload2' }
+      },
+      {
+        path: 'report-designer',
+        name: 'ReportDesigner',
+        component: () => import('@/views/ReportDesigner.vue'),
+        meta: { title: '报表设计', icon: 'el-icon-edit' }
+      },
+      {
+        path: 'report-templates',
+        name: 'ReportTemplates',
+        component: () => import('@/views/ReportTemplates.vue'),
+        meta: { title: '报表模板', icon: 'el-icon-document-copy' }
+      },
+      {
+        path: 'report-pivot',
+        name: 'ReportPivot',
+        component: () => import('@/views/ReportPivot.vue'),
+        meta: { title: '数据透视', icon: 'el-icon-data-analysis' }
+      },
+      {
+        path: 'report-subscriptions',
+        name: 'ReportSubscriptions',
+        component: () => import('@/views/ReportSubscriptions.vue'),
+        meta: { title: '报表订阅', icon: 'el-icon-alarm-clock' }
       }
     ]
   }

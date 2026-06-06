@@ -15,13 +15,27 @@
         :collapse="false"
       >
         <el-menu-item
-          v-for="route in menuRoutes"
+          v-for="route in regularRoutes"
           :key="route.path"
           :index="route.fullPath"
         >
           <i :class="route.meta.icon"></i>
           <span slot="title">{{ route.meta.title }}</span>
         </el-menu-item>
+        <el-submenu index="report-group">
+          <template slot="title">
+            <i class="el-icon-data-board"></i>
+            <span>报表中心</span>
+          </template>
+          <el-menu-item
+            v-for="route in reportRoutes"
+            :key="route.path"
+            :index="route.fullPath"
+          >
+            <i :class="route.meta.icon"></i>
+            <span slot="title">{{ route.meta.title }}</span>
+          </el-menu-item>
+        </el-submenu>
       </el-menu>
       <div class="sidebar-footer">
         <div class="reminders" v-if="reminders.length > 0">
@@ -169,11 +183,19 @@ export default {
     }
   },
   computed: {
-    menuRoutes() {
+    allRoutes() {
       return this.$router.options.routes[0].children.map(route => ({
         ...route,
         fullPath: '/' + route.path
       }))
+    },
+    regularRoutes() {
+      const reportPaths = ['report-designer', 'report-templates', 'report-pivot', 'report-subscriptions']
+      return this.allRoutes.filter(r => !reportPaths.includes(r.path))
+    },
+    reportRoutes() {
+      const reportPaths = ['report-designer', 'report-templates', 'report-pivot', 'report-subscriptions']
+      return this.allRoutes.filter(r => reportPaths.includes(r.path))
     }
   },
   created() {
