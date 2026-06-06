@@ -498,14 +498,29 @@
           v-if="!isImporting && !importResult"
           type="primary" 
           icon="el-icon-upload2" 
-          @click="startImport">
+          @click="startImport"
+          :disabled="importRecords.length === 0">
           开始导入
         </el-button>
+        <template v-if="importResult && importResult.success">
+          <el-button 
+            type="success" 
+            icon="el-icon-tickets" 
+            @click="goToRecords">
+            查看账单明细
+          </el-button>
+          <el-button 
+            type="primary" 
+            icon="el-icon-upload2"
+            @click="resetImport">
+            继续导入新文件
+          </el-button>
+        </template>
         <el-button 
-          v-if="importResult"
+          v-if="importResult && !importResult.success"
           type="primary" 
           @click="resetImport">
-          继续导入新文件
+          重新导入
         </el-button>
       </div>
     </el-card>
@@ -906,7 +921,8 @@ export default {
       try {
         const result = await importApi.startImport({
           records: this.importRecords,
-          categories: this.categories
+          categories: this.categories,
+          accounts: this.accounts
         })
         
         this.importResult = result
@@ -985,6 +1001,9 @@ export default {
         console.error('Rollback error:', error)
         this.$message.error('撤销失败')
       }
+    },
+    goToRecords() {
+      this.$router.push('/records')
     },
     resetImport() {
       this.currentStep = 0

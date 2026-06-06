@@ -457,8 +457,35 @@ export default {
   },
   created() {
     this.loadData()
+    this.setupRecordsListener()
+  },
+  activated() {
+    this.loadData()
+  },
+  beforeDestroy() {
+    this.removeRecordsListener()
   },
   methods: {
+    setupRecordsListener() {
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron')
+        ipcRenderer.on('records-updated', this.handleRecordsUpdated)
+      }
+    },
+    removeRecordsListener() {
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron')
+        ipcRenderer.removeListener('records-updated', this.handleRecordsUpdated)
+      }
+    },
+    handleRecordsUpdated(event, data) {
+      this.loadData()
+      if (data.action === 'import') {
+        this.$message.info(`检测到新导入 ${data.count} 条记录，已自动刷新`)
+      } else if (data.action === 'rollback') {
+        this.$message.info(`已撤销 ${data.count} 条记录，已自动刷新`)
+      }
+    },
     formatMoney,
     formatDate,
     validateAmount(rule, value, callback) {

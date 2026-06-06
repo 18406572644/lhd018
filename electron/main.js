@@ -2655,8 +2655,25 @@ ipcMain.handle('preview-import-data', (event, { rows, fieldMapping, categories, 
       merchant: row[fieldMapping.merchant] || ''
     }
     
-    if (!record.accountName && defaultAccountId) {
+    if (record.accountName) {
+      const matchedAccount = accounts.find(a => 
+        a.name === record.accountName || 
+        a.name.toLowerCase() === record.accountName.toLowerCase() ||
+        record.accountName.includes(a.name) ||
+        a.name.includes(record.accountName)
+      )
+      if (matchedAccount) {
+        record.accountId = matchedAccount.id
+        record.accountName = matchedAccount.name
+      } else if (defaultAccountId) {
+        record.accountId = defaultAccountId
+      }
+    } else if (defaultAccountId) {
       record.accountId = defaultAccountId
+      const defaultAccount = accounts.find(a => a.id === defaultAccountId)
+      if (defaultAccount) {
+        record.accountName = defaultAccount.name
+      }
     }
     
     const matchedCategory = categories.find(c => 
@@ -2699,7 +2716,7 @@ ipcMain.handle('check-import-duplicates', (event, records) => {
   return checkDuplicates(records, existingRecords)
 })
 
-ipcMain.handle('start-import', async (event, { records, importId, categories }) => {
+ipcMain.handle('start-import', async (event, { records, importId, categories, accounts }) => {
   const importTaskId = Date.now().toString()
   importCancelFlag[importTaskId] = false
   
@@ -2731,6 +2748,29 @@ ipcMain.handle('start-import', async (event, { records, importId, categories }) 
         const defaultCat = categories.find(c => c.id === newRecord.categoryId)
         if (defaultCat) {
           newRecord.categoryName = defaultCat.name
+        }
+      }
+      
+      if (!newRecord.accountId && accounts && accounts.length > 0) {
+        if (newRecord.accountName) {
+          const matchedAccount = accounts.find(a => 
+            a.name === newRecord.accountName || 
+            a.name.toLowerCase() === newRecord.accountName.toLowerCase() ||
+            newRecord.accountName.includes(a.name) ||
+            a.name.includes(newRecord.accountName)
+          )
+          if (matchedAccount) {
+            newRecord.accountId = matchedAccount.id
+            newRecord.accountName = matchedAccount.name
+          } else {
+            const defaultAccount = accounts[0]
+            newRecord.accountId = defaultAccount.id
+            newRecord.accountName = defaultAccount.name
+          }
+        } else {
+          const defaultAccount = accounts[0]
+          newRecord.accountId = defaultAccount.id
+          newRecord.accountName = defaultAccount.name
         }
       }
       
@@ -2784,6 +2824,13 @@ ipcMain.handle('start-import', async (event, { records, importId, categories }) 
     recalculateAllAccountBalances()
     
     delete importCancelFlag[importTaskId]
+    
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('records-updated', {
+        action: 'import',
+        count: importedRecordIds.length
+      })
+    })
     
     return {
       success: true,
@@ -2840,6 +2887,13 @@ ipcMain.handle('rollback-import', (event, importTaskId) => {
     writeJsonFile(rollbackPath, newRollbackList)
     
     recalculateAllAccountBalances()
+    
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('records-updated', {
+        action: 'rollback',
+        count: rollbackData.importedCount
+      })
+    })
     
     return { success: true, rollbackCount: rollbackData.importedCount }
   } catch (error) {
